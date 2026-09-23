@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Handscript: text to handwriting</title>
+    <meta
+      name="description"
+      content="Turn typed text into realistic handwriting on paper. Free, no sign-up, no page limits, and nothing leaves your browser."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23fdfcf7'/%3E%3Cpath d='M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4' fill='none' stroke='%231d3b8f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true" class="brand-mark">
+          <path d="M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4" />
+        </svg>
+        <span>Handscript</span>
+      </div>
+      <p class="tagline">Free, no sign-up, no page limits. Your text never leaves this browser.</p>
+    </header>
+
+    <main class="app">
+      <aside class="panel" aria-label="Settings">
+        <section class="card">
+          <div class="card-head">
+            <h2>Text</h2>
+            <span class="muted" id="char-count"></span>
+          </div>
+          <textarea id="text" data-key="text" spellcheck="true" rows="10" aria-label="Text to handwrite"></textarea>
+          <div class="row wrap">
+            <label class="button ghost small">
+              Import .txt
+              <input type="file" id="import-text" accept=".txt,.md,text/plain" hidden />
+            </label>
+            <button type="button" class="ghost small" id="sample-text">Sample</button>
+            <button type="button" class="ghost small" id="clear-text">Clear</button>
+          </div>
+          <p class="hint">Put <code>[[page]]</code> on a line by itself to start a new page.</p>
+        </section>
+
+        <section class="card">
+          <h2>Quick looks</h2>
+          <div class="presets" id="presets"></div>
+        </section>
+
+        <section class="card">
+          <h2>Handwriting</h2>
+          <label class="field">
+            <span>Font</span>
+            <select id="font" data-key="fontId"></select>
+          </label>
+          <label class="button ghost small upload">
+            Upload your own handwriting font (.ttf, .otf, .woff)
+            <input type="file" id="font-upload" accept=".ttf,.otf,.woff,.woff2" hidden />
+          </label>
+          <label class="field range">
+            <span>Letter size <output data-for="letterSize" data-format="pct"></output></span>
+            <input type="range" data-key="letterSize" min="0.2" max="0.6" step="0.01" />
+          </label>
+          <label class="field range">
+            <span>Slant <output data-for="slant" data-format="deg"></output></span>
+            <input type="range" data-key="slant" min="-15" max="25" step="1" />
+          </label>
+          <label class="field range">
+            <span>Letter spacing <output data-for="letterSpacing" data-format="signed-pct"></output></span>
+            <input type="range" data-key="letterSpacing" min="-0.06" max="0.2" step="0.005" />
+          </label>
+          <label class="field range">
+            <span>Word spacing <output data-for="wordSpacing" data-format="times"></output></span>
+            <input type="range" data-key="wordSpacing" min="0.5" max="3" step="0.05" />
+          </label>
+          <div class="field">
+            <span>Ink</span>
+            <div class="swatches" data-swatches="inkColor">
+              <button type="button" class="swatch" data-value="#1d3b8f" title="Blue"></button>
+              <button type="button" class="swatch" data-value="#1f2024" title="Black"></button>
+              <button type="button" class="swatch" data-value="#2a1f63" title="Blue-black"></button>
+              <button type="button" class="swatch" data-value="#b3261e" title="Red"></button>
+              <button type="button" class="swatch" data-value="#1f6b3a" title="Green"></button>
+              <button type="button" class="swatch" data-value="#48484a" title="Graphite"></button>
+              <input type="color" data-key="inkColor" aria-label="Custom ink colour" />
+            </div>
+          </div>
+          <label class="field">
+            <span>Pen</span>
+            <select data-key="pen">
+              <option value="ballpoint">Ballpoint</option>
+              <option value="gel">Gel pen</option>
+              <option value="fountain">Fountain pen</option>
+              <option value="pencil">Pencil</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="card">
+          <h2>Paper</h2>
+          <div class="grid-2">
+            <label class="field">
+              <span>Size</span>
+              <select data-key="paperSize" id="paper-size"></select>
+            </label>
+            <label class="field">
+              <span>Style</span>
+              <select data-key="paperStyle">
+                <option value="ruled">Ruled</option>
+                <option value="plain">Plain</option>
+                <option value="grid">Grid</option>
+                <option value="dotted">Dotted</option>
+              </select>
+            </label>
+          </div>
+          <label class="field range">
+            <span>Line spacing <output data-for="lineSpacing" data-format="mm"></output></span>
+            <input type="range" data-key="lineSpacing" min="5" max="14" step="0.25" />
+          </label>
+          <div class="field">
+            <span>Paper colour</span>
+            <div class="swatches" data-swatches="paperColor">
+              <button type="button" class="swatch" data-value="#fdfcf7" title="White"></button>
+              <button type="button" class="swatch" data-value="#f7efdc" title="Ivory"></button>
+              <button type="button" class="swatch" data-value="#fbf2a9" title="Legal pad yellow"></button>
+              <button type="button" class="swatch" data-value="#ece8df" title="Recycled"></button>
+              <input type="color" data-key="paperColor" aria-label="Custom paper colour" />
+            </div>
+          </div>
+          <div class="grid-2">
+            <label class="field">
+              <span>Line colour</span>
+              <input type="color" data-key="ruleColor" />
+            </label>
+            <div class="field checks">
+              <label><input type="checkbox" data-key="landscape" /> Landscape</label>
+              <label><input type="checkbox" data-key="marginLine" /> Margin line</label>
+            </div>
+          </div>
+          <fieldset class="margins">
+            <legend>Margins (mm)</legend>
+            <label>Top <input type="number" data-key="margins.top" min="0" max="120" step="1" /></label>
+            <label>Bottom <input type="number" data-key="margins.bottom" min="0" max="120" step="1" /></label>
+            <label>Left <input type="number" data-key="margins.left" min="0" max="120" step="1" /></label>
+            <label>Right <input type="number" data-key="margins.right" min="0" max="120" step="1" /></label>
+          </fieldset>
+          <div class="checks row wrap">
+            <label><input type="checkbox" data-key="texture" /> Paper grain</label>
+            <label><input type="checkbox" data-key="scanEffect" /> Scanned look</label>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Realism</h2>
+            <button type="button" class="ghost small" id="reseed" title="Same settings, new random variation">
+              New variation
+            </button>
+          </div>
+          <label class="field range">
+            <span>Messiness <output data-for="messiness" data-format="pct"></output></span>
+            <input type="range" data-key="messiness" min="0" max="1" step="0.01" />
+          </label>
+          <details>
+            <summary>Fine-tune</summary>
+            <label class="field range">
+              <span>Baseline wobble <output data-for="jitter.baseline" data-format="times"></output></span>
+              <input type="range" data-key="jitter.baseline" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Letter tilt <output data-for="jitter.rotation" data-format="times"></output></span>
+              <input type="range" data-key="jitter.rotation" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Size variation <output data-for="jitter.scale" data-format="times"></output></span>
+              <input type="range" data-key="jitter.scale" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Spacing variation <output data-for="jitter.spacing" data-format="times"></output></span>
+              <input type="range" data-key="jitter.spacing" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Line tilt <output data-for="jitter.lineSlope" data-format="times"></output></span>
+              <input type="range" data-key="jitter.lineSlope" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Ragged left edge <output data-for="jitter.indent" data-format="times"></output></span>
+              <input type="range" data-key="jitter.indent" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Tiring hand <output data-for="jitter.fatigue" data-format="times"></output></span>
+              <input type="range" data-key="jitter.fatigue" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Ink flow variation <output data-for="jitter.ink" data-format="times"></output></span>
+              <input type="range" data-key="jitter.ink" min="0" max="2" step="0.05" />
+            </label>
+          </details>
+        </section>
+
+        <section class="card">
+          <h2>Download</h2>
+          <label class="field">
+            <span>Resolution</span>
+            <select id="dpi">
+              <option value="150">150 DPI: small files</option>
+              <option value="200" selected>200 DPI: balanced</option>
+              <option value="300">300 DPI: print quality</option>
+            </select>
+          </label>
+          <div class="row">
+            <button type="button" class="primary" id="export-pdf">Download PDF</button>
+            <button type="button" id="export-png">Download PNG</button>
+          </div>
+          <progress id="export-progress" max="1" value="0" hidden></progress>
+          <p class="hint" id="export-status" role="status"></p>
+        </section>
+
+        <p class="footnote">
+          Fonts are SIL Open Font License or Apache 2.0 and ship with the app
+          (<a href="font-licenses.txt" target="_blank" rel="noopener">licences</a>). Fonts you upload stay on your device.
+        </p>
+      </aside>
+
+      <section class="stage" aria-label="Preview">
+        <div class="stage-bar">
+          <div class="pager">
+            <button type="button" class="icon" id="prev-page" aria-label="Previous page">‹</button>
+            <span id="page-label">Page 1 of 1</span>
+            <button type="button" class="icon" id="next-page" aria-label="Next page">›</button>
+          </div>
+          <span class="muted" id="status" role="status"></span>
+          <label class="zoom">
+            <span class="sr-only">Zoom</span>
+            <select id="zoom">
+              <option value="fit">Fit width</option>
+              <option value="1">100%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option>
+            </select>
+          </label>
+        </div>
+        <div class="stage-scroll" id="stage-scroll">
+          <canvas id="preview" role="img" aria-label="Handwritten page preview"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

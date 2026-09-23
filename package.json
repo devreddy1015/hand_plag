@@ -1,0 +1,38 @@
+{
+  "name": "hand-plag",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Free, unlimited text-to-handwriting renderer that runs entirely in the browser.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/font-licenses.mjs && vite",
+    "build": "node scripts/font-licenses.mjs && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/aref-ruqaa": "^5.3.0",
+    "@fontsource/caveat": "^5.3.0",
+    "@fontsource/cedarville-cursive": "^5.3.0",
+    "@fontsource/gochi-hand": "^5.3.0",
+    "@fontsource/homemade-apple": "^5.3.0",
+    "@fontsource/indie-flower": "^5.3.0",
+    "@fontsource/kalam": "^5.3.0",
+    "@fontsource/ma-shan-zheng": "^5.3.1",
+    "@fontsource/nanum-pen-script": "^5.3.0",
+    "@fontsource/neucha": "^5.3.0",
+    "@fontsource/patrick-hand": "^5.3.0",
+    "@fontsource/reenie-beanie": "^5.3.0",
+    "@fontsource/shadows-into-light": "^5.3.0",
+    "@fontsource/yomogi": "^5.3.0",
+    "fflate": "^0.8.3",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}
