@@ -1,5 +1,5 @@
 import { zipSync, type Zippable } from 'fflate';
-import { releaseLayers } from '../engine';
+import { releaseLayers, releaseSketches } from '../engine';
 import { createCanvas, drawPage } from '../pipeline';
 import { canvasToBlob, jpegQuality, nextFrame, type ExportJob } from './download';
 
@@ -39,5 +39,6 @@ export async function exportPng(job: ExportJob): Promise<{ blob: Blob; filename:
     canvas.width = 1;
     canvas.height = 1;
     releaseLayers();
+    releaseSketches();
   }
 }

@@ -13,6 +13,7 @@
  *   **important**    pressed harder, so the ink is heavier
  *   _slanted_        leaned over further
  *   __underlined__   underlined by hand
+ *   ![caption](id)   a diagram, drawn out and captioned
  *   [[page]]         start a new sheet
  *
  * With `markdown: false` only `[[page]]` is honoured and everything else is
@@ -23,7 +24,7 @@
 /** A line containing only this marker starts a new page. */
 export const PAGE_BREAK = /^\s*\[\[page\]\]\s*$/i;
 
-export type BlockKind = 'paragraph' | 'heading' | 'list' | 'quote' | 'divider' | 'blank' | 'pagebreak';
+export type BlockKind = 'paragraph' | 'heading' | 'list' | 'quote' | 'divider' | 'blank' | 'pagebreak' | 'image' | 'caption';
 
 /** Emphasis bits, one entry per character of `Block.text`. */
 export const EM_BOLD = 1;
@@ -40,6 +41,8 @@ export interface Block {
   emphasis: Uint8Array | null;
   /** Written before the text, on the first line only (bullets, numbers). */
   marker: string;
+  /** Image blocks: the key of the picture to draw. */
+  src: string;
   /** Leading whitespace of the source line, in spaces (tabs count as four). */
   indentSpaces: number;
 }
@@ -48,6 +51,8 @@ const HEADING = /^(#{1,3})\s+(.*)$/;
 const BULLET = /^([-*+•‣·])\s+(.*)$/;
 const NUMBERED = /^(\(?\d{1,3}[.)]|[ivxlIVXL]{1,5}[.)]|[a-zA-Z][.)])\s+(.*)$/;
 const QUOTE = /^>\s?(.*)$/;
+/** A diagram on a line of its own: ![caption](id) */
+const IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
 const DIVIDER = /^\s*([-*_=]\s?){3,}\s*$/;
 
 function leadingSpaces(line: string): number {
@@ -61,7 +66,7 @@ function leadingSpaces(line: string): number {
 }
 
 function block(kind: BlockKind, text: string, extra: Partial<Block> = {}): Block {
-  return { kind, level: 0, text, emphasis: null, marker: '', indentSpaces: 0, ...extra };
+  return { kind, level: 0, text, emphasis: null, marker: '', indentSpaces: 0, src: '', ...extra };
 }
 
 /** Split a document into blocks. Each block is written starting on a new line. */
@@ -78,6 +83,13 @@ export function parseBlocks(text: string, markdown: boolean): Block[] {
     const line = raw.trim();
     if (line === '') {
       out.push(block('blank', ''));
+      continue;
+    }
+    const image = IMAGE.exec(line);
+    if (image) {
+      out.push(block('image', '', { src: image[2] }));
+      // The caption is written under the diagram, in a smaller hand.
+      if (image[1].trim() !== '') out.push(withInline(block('caption', image[1].trim()), markdown));
       continue;
     }
     if (!markdown) {

@@ -22,6 +22,17 @@ boundaries, and drops the running headers, footers and page numbers that should 
 written out again. A 15-page PDF becomes about 30 handwritten pages in a couple of
 seconds.
 
+**Brings the diagrams with it.** A PDF never says "this is a figure" either, so pages
+that draw something are rasterised, the text is masked out of the picture, and what is
+left is treated as figures: connected blocks of drawing, joined up, measured, and cut
+out. Each one keeps what belongs to it — the labels inside it, the axis titles under it,
+and the caption beneath — so a chart arrives as a chart with its caption, rather than as
+a scattering of stray words in the middle of a paragraph. Line art (diagrams, charts,
+tables) is **copied out in the writer's own pen**; photographs stay photographs, because
+no one draws a micrograph by hand. Drag a picture onto the page to add your own, or write
+`![caption](id)` yourself. A figure the app has no picture for leaves a ruled box, which
+is what a page looks like before the diagram is drawn in.
+
 **Writes it by hand.** 19 handwriting fonts, or upload your own. The layout engine is
 built around how people actually write, not how a typesetter sets type:
 
@@ -62,7 +73,7 @@ multi-page PDF or PNG/JPEG images at 150–400 DPI, all pages or a range.
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm test           # unit tests: layout, paper, markup, PDF reflow, segmentation
+npm test           # unit tests: layout, paper, markup, PDF reflow, figures, segmentation
 npm run build      # static site in dist/
 npm run preview    # serve the built site
 ```
@@ -84,11 +95,12 @@ from any sub-path. No server, no API keys, no backend.
 ## How it works
 
 ```
-text ─► blocks ─► layout (pure) ─► pages of glyphs + strokes ─► render (Canvas 2D) ─► PDF / PNG
-  │        │           │                                            │
-PDF/DOCX  headings   lines, columns, pagination,            paper + ruling + furniture,
-importer  lists      seeded per-glyph jitter,               ink layer (multiply blend),
-          emphasis   fill, hyphenation, corrections         nib, bleed, pooling, scan/photo
+text ─► blocks ─► layout (pure) ─► pages of glyphs, strokes ─► render (Canvas 2D) ─► PDF / PNG
+  │        │           │              and diagrams               │
+PDF/DOCX  headings   lines, columns, pagination,          paper + ruling + furniture,
+importer  lists      seeded per-glyph jitter,             ink layer (multiply blend),
++ figures emphasis   fill, hyphenation, corrections,      nib, bleed, pooling, traced
+          diagrams   whole-line gaps for figures          diagrams, scan/photo finish
 ```
 
 | Path | Role |
@@ -101,6 +113,8 @@ importer  lists      seeded per-glyph jitter,               ink layer (multiply 
 | `src/engine/markup.ts` | The small Markdown subset that maps onto things a hand can do. |
 | `src/engine/segment.ts` | Grapheme clusters, whole-word units for scripts that need shaping, CJK break points, script detection, hyphenation points. |
 | `src/import/reflow.ts` | Rebuilding a document from positioned text: lines, columns, paragraphs, headings, lists, running heads. Pure, and tested on its own. |
+| `src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, and which text belongs to which figure. Pure, and tested on its own. |
+| `src/images.ts` | The pictures a document refers to, decoded and ready to draw. |
 | `src/import/pdf.ts`, `docx.ts` | The readers themselves, loaded on first use. |
 | `src/fonts.ts` | Font catalog, fallback stacks, per-script size matching, custom font upload. `@font-face` rules load per font, on demand. |
 | `src/export/` | PDF (pdf-lib) and PNG/JPEG/ZIP (fflate). Both load only when you first export. |

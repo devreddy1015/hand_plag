@@ -11,6 +11,7 @@ import {
   type Settings,
 } from './engine';
 import { createMeasurer, cssFontStack, fallbackScaler, findFont, fontFamiliesFor, fontMetrics, loadFonts } from './fonts';
+import { pictureImage, pictureSize } from './images';
 
 export interface Prepared {
   settings: Settings;
@@ -38,6 +39,7 @@ export async function prepare(settings: Settings): Promise<Prepared> {
   const doc = layoutDocument(settings.text, geometryOf, fontPx, settings, createMeasurer(fontStack, fontPx), {
     connected: font.connected,
     unitScale: fallbackScaler(font, families),
+    imageSize: pictureSize,
   });
   return { settings, doc, fontStack };
 }
@@ -47,6 +49,7 @@ export function drawPage(target: AnyCanvas, prepared: Prepared, pageIndex: numbe
     scale,
     fontStack: prepared.fontStack,
     createCanvas,
+    images: pictureImage,
   });
 }
 

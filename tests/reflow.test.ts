@@ -214,6 +214,34 @@ describe('running heads', () => {
   });
 });
 
+describe('figures', () => {
+  it('writes a figure into the flow where it sits on the page', () => {
+    const doc = page(0, [
+      { text: 'A paragraph above the figure that runs the full measure.', y: 100 },
+      { text: 'Another paragraph, well below the figure instead.', y: 400 },
+    ]);
+    doc.figures = [{ id: 'pdf-1-1', top: 200, bottom: 340, caption: 'Figure 1. A cycle.' }];
+    const out = text([doc]).split('\n\n');
+    expect(out[1]).toBe('![Figure 1. A cycle.](pdf-1-1)');
+    expect(out[2]).toContain('Another paragraph');
+  });
+
+  it('writes a figure at the foot of the page after the text', () => {
+    const doc = page(0, [{ text: 'All the text comes first on this page.', y: 100, width: 220 }]);
+    doc.figures = [{ id: 'pdf-1-1', top: 500, bottom: 640, caption: '' }];
+    expect(text([doc]).split('\n\n')[1]).toBe('![](pdf-1-1)');
+  });
+
+  it('keeps brackets out of the caption markup', () => {
+    const doc = page(0, [{ text: 'Text.', y: 100, width: 40 }]);
+    doc.figures = [{ id: 'pdf-1-1', top: 200, bottom: 300, caption: 'Figure 1 (a) [detail]' }];
+    const markup = text([doc]).split('\n\n')[1];
+    expect(markup).toMatch(/^!\[[^[\]()]*\]\(pdf-1-1\)$/);
+    expect(markup).toContain('Figure 1');
+    expect(markup).toContain('detail');
+  });
+});
+
 describe('columns', () => {
   it('reads down one column before the other', () => {
     const left = (text: string, y: number) => ({ text, y, x: 50, width: 200 });

@@ -1,5 +1,5 @@
 import { DEFAULT_FEATURES } from './templates';
-import type { FinishLook, Holes, MarginRule, PageNumberMode, PaperStyle, PenType, Settings } from './types';
+import type { DiagramStyle, FinishLook, Holes, MarginRule, PageNumberMode, PaperStyle, PenType, Settings } from './types';
 
 export const SAMPLE_TEXT = `# Photosynthesis
 
@@ -45,6 +45,11 @@ export const DEFAULT_SETTINGS: Settings = {
   texture: true,
   finish: 'none',
 
+  diagrams: true,
+  diagramStyle: 'sketch',
+  diagramFrame: false,
+  diagramScale: 0.72,
+
   messiness: 0.5,
   corrections: 0.12,
   jitter: {
@@ -65,6 +70,7 @@ export const DEFAULT_SETTINGS: Settings = {
 const PAPER_STYLES: PaperStyle[] = ['plain', 'ruled', 'grid', 'dotted', 'four-line', 'seyes'];
 const PENS: PenType[] = ['ballpoint', 'gel', 'rollerball', 'fountain', 'calligraphy', 'felt', 'pencil'];
 const FINISHES: FinishLook[] = ['none', 'scan', 'photo'];
+const DIAGRAM_STYLES: DiagramStyle[] = ['sketch', 'pasted'];
 const MARGIN_RULES: MarginRule[] = ['none', 'single', 'double', 'box'];
 const HOLES: Holes[] = ['none', 'punch2', 'punch3', 'spiral'];
 const PAGE_NUMBERS: PageNumberMode[] = ['none', 'printed', 'handwritten'];
@@ -74,6 +80,7 @@ const ENUMS: Record<string, readonly string[]> = {
   paperStyle: PAPER_STYLES,
   pen: PENS,
   finish: FINISHES,
+  diagramStyle: DIAGRAM_STYLES,
   'features.marginRule': MARGIN_RULES,
   'features.holes': HOLES,
   'features.pageNumber': PAGE_NUMBERS,

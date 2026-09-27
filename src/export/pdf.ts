@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { releaseLayers } from '../engine';
+import { releaseLayers, releaseSketches } from '../engine';
 import { createCanvas, drawPage } from '../pipeline';
 import { canvasToBlob, jpegQuality, nextFrame, type ExportJob } from './download';
 
@@ -51,5 +51,6 @@ export async function exportPdf(job: ExportJob): Promise<Blob> {
     canvas.width = 1;
     canvas.height = 1;
     releaseLayers();
+    releaseSketches();
   }
 }

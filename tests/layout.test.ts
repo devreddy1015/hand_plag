@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, applyTemplate, layoutDocument, pageGeometry, type PageGeometry, type Settings } from '../src/engine';
+import {
+  DEFAULT_SETTINGS,
+  applyTemplate,
+  layoutDocument,
+  pageGeometry,
+  type LayoutOptions,
+  type PageGeometry,
+  type Settings,
+} from '../src/engine';
 
 /** Monospace-ish fake font: letters 10u wide, spaces 5u. */
 const measure = (text: string) => {
@@ -15,10 +23,13 @@ function settings(overrides: Partial<Settings> = {}): Settings {
 }
 
 /** Lay out with the human touches off, so assertions can be exact. */
-function layout(text: string, overrides: Partial<Settings> = {}) {
+function layout(text: string, overrides: Partial<Settings> = {}, options: LayoutOptions = {}) {
   const s = settings({ text, corrections: 0, lineFill: 0, markdown: false, ...overrides });
-  return layoutDocument(text, (i) => pageGeometry(s, i), FONT_PX, s, measure);
+  return layoutDocument(text, (i) => pageGeometry(s, i), FONT_PX, s, measure, options);
 }
+
+/** A picture of a given shape, as the image registry would report it. */
+const picture = (width = 400, height = 300): LayoutOptions => ({ imageSize: () => ({ width, height }) });
 
 const area = (geom: PageGeometry) => geom.areas[0];
 
@@ -179,6 +190,74 @@ describe('structure', () => {
   it('ignores markup when markdown reading is off', () => {
     const doc = layout('# not a heading', { markdown: false });
     expect(drawn(doc)).toBe('#notaheading');
+  });
+});
+
+describe('diagrams', () => {
+  const page = (doc: ReturnType<typeof layout>, i = 0) => doc.pages[i];
+
+  it('leaves a gap of the right shape and writes on underneath', () => {
+    const doc = layout('Before the figure.\n![](fig-1)\nAfter the figure.', { markdown: true }, picture(400, 300));
+    const images = page(doc).images;
+    expect(images).toHaveLength(1);
+    const column = area(doc.geometry).right - area(doc.geometry).left;
+    expect(images[0].width).toBeCloseTo(column * DEFAULT_SETTINGS.diagramScale, 5);
+    expect(images[0].height / images[0].width).toBeCloseTo(300 / 400, 5);
+    // The text after it is written below the picture, not over it.
+    const after = page(doc).glyphs.filter((g) => g.y > images[0].y);
+    expect(after.length).toBeGreaterThan(0);
+    for (const g of after) expect(g.y).toBeGreaterThan(images[0].y + images[0].height - doc.geometry.spacing);
+  });
+
+  it('keeps a figure whole by carrying it to the next page', () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `Line number ${i + 1} of the page.`).join('\n');
+    const doc = layout(`${filler}\n![](fig-1)`, { markdown: true }, picture(400, 600));
+    expect(doc.pages.length).toBeGreaterThan(1);
+    expect(doc.pages[0].images).toHaveLength(0);
+    expect(doc.pages[1].images).toHaveLength(1);
+    const image = doc.pages[1].images[0];
+    expect(image.y).toBeGreaterThan(0);
+    expect(image.y + image.height).toBeLessThanOrEqual(doc.geometry.height);
+  });
+
+  it('writes the caption under the figure, smaller and centred', () => {
+    const doc = layout('![Figure 1. The cycle](fig-1)', { markdown: true, messiness: 0 }, picture());
+    const image = page(doc).images[0];
+    const caption = page(doc).glyphs;
+    expect(caption.map((g) => g.text).join('')).toBe('Figure1.Thecycle');
+    for (const g of caption) expect(g.y).toBeGreaterThan(image.y + image.height);
+    // Smaller than the body hand, and set in from the column edge on both sides.
+    expect(caption[0].scaleY).toBeLessThan(1);
+    const left = Math.min(...caption.map((g) => g.x));
+    const right = Math.max(...caption.map((g) => g.x));
+    const centre = (area(doc.geometry).left + area(doc.geometry).right) / 2;
+    expect(Math.abs((left + right) / 2 - centre)).toBeLessThan(doc.geometry.spacing * 2);
+  });
+
+  it('rules an empty box when the picture is not to hand', () => {
+    const doc = layout('![](missing)', { markdown: true });
+    expect(page(doc).images).toHaveLength(1);
+    // Four strokes: one per side of the box.
+    expect(page(doc).strokes).toHaveLength(4);
+  });
+
+  it('rules a box round a figure when asked, and not otherwise', () => {
+    const framed = layout('![](fig-1)', { markdown: true, diagramFrame: true }, picture());
+    expect(framed.pages[0].strokes).toHaveLength(4);
+    const plain = layout('![](fig-1)', { markdown: true, diagramFrame: false }, picture());
+    expect(plain.pages[0].strokes).toHaveLength(0);
+  });
+
+  it('leaves diagrams out altogether when they are turned off', () => {
+    const doc = layout('![Figure 1. The cycle](fig-1)\nText.', { markdown: true, diagrams: false }, picture());
+    expect(doc.pages[0].images).toHaveLength(0);
+    expect(drawn(doc)).toBe('Text.');
+  });
+
+  it('follows the width asked for', () => {
+    const wide = layout('![](fig-1)', { markdown: true, diagramScale: 1 }, picture());
+    const narrow = layout('![](fig-1)', { markdown: true, diagramScale: 0.4 }, picture());
+    expect(narrow.pages[0].images[0].width).toBeCloseTo(wide.pages[0].images[0].width * 0.4, 5);
   });
 });
 

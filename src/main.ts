@@ -11,6 +11,7 @@ import {
 import { BYTES_PER_PIXEL, downloadBlob, safeFilename, type ExportJob } from './export/download';
 import { addCustomFont, allFonts, loadFontCss, type FontEntry } from './fonts';
 import { detectKind, importDocument, type PdfOptions } from './import';
+import { addPicture, addPictureFile, clearPictures, pictureCount } from './images';
 import { reflowHardWraps } from './import/shared';
 import { drawPage, drawPaperOnly, prepare, type Prepared } from './pipeline';
 import { PRESETS, applyPreset } from './ui/presets';
@@ -59,7 +60,7 @@ function loadSettings(): Settings {
 }
 
 function loadImportOptions(): PdfOptions {
-  const base: PdfOptions = { keepPageBreaks: false, detectHeadings: true, dropRunningHeads: true };
+  const base: PdfOptions = { keepPageBreaks: false, detectHeadings: true, dropRunningHeads: true, diagrams: true };
   try {
     const raw = localStorage.getItem(IMPORT_KEY);
     if (raw) {
@@ -193,6 +194,9 @@ function syncControls(): void {
   $<HTMLInputElement>('#opt-page-breaks').checked = importOptions.keepPageBreaks;
   $<HTMLInputElement>('#opt-headings').checked = importOptions.detectHeadings;
   $<HTMLInputElement>('#opt-heads').checked = importOptions.dropRunningHeads;
+  $<HTMLInputElement>('#opt-diagrams').checked = importOptions.diagrams;
+  $<HTMLSpanElement>('#diagram-count').textContent =
+    pictureCount() === 0 ? 'none yet' : `${pictureCount()} in this document`;
   $<HTMLParagraphElement>('#seed-note').textContent = `Variation #${settings.seed}. The same settings and seed always give the same page.`;
   updateCharCount();
   updateEstimate();
@@ -285,6 +289,13 @@ function bindControls(): void {
     toast('Joined the wrapped lines back into paragraphs.');
   });
 
+  $<HTMLInputElement>('#diagram-upload').addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) await addDiagram(file);
+  });
+
   $<HTMLButtonElement>('#sample-text').addEventListener('click', () => {
     settings.text = SAMPLE_TEXT;
     onSettingChanged('text');
@@ -320,6 +331,7 @@ function bindControls(): void {
     ['#opt-page-breaks', 'keepPageBreaks'],
     ['#opt-headings', 'detectHeadings'],
     ['#opt-heads', 'dropRunningHeads'],
+    ['#opt-diagrams', 'diagrams'],
   ] as [string, keyof PdfOptions][]) {
     $<HTMLInputElement>(id).addEventListener('change', (e) => {
       importOptions[key] = (e.target as HTMLInputElement).checked;
@@ -556,6 +568,10 @@ function bindDragAndDrop(): void {
     depth = 0;
     show(false);
     const file = e.dataTransfer.files[0];
+    if (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name)) {
+      await addDiagram(file);
+      return;
+    }
     if (/\.(ttf|otf|woff2?)$/i.test(file.name)) {
       try {
         const entry = await addCustomFont(file);
@@ -570,6 +586,30 @@ function bindDragAndDrop(): void {
     }
     await runImport(file);
   });
+}
+
+/** Put a picture into the document, where the writer is looking. */
+async function addDiagram(file: File): Promise<void> {
+  try {
+    const picture = await addPictureFile(file);
+    const caption = safeFilename(file.name, '').replace(/[[\]()]/g, ' ').trim();
+    insertAtCursor(`\n![${caption}](${picture.id})\n`);
+    toast('Diagram added. Drag another in, or write around it.');
+  } catch {
+    toast(`Couldn't read the picture “${file.name}”.`, true);
+  }
+}
+
+/** Insert markup at the caret, or at the end when the writer is elsewhere. */
+function insertAtCursor(markup: string): void {
+  const area = $<HTMLTextAreaElement>('#text');
+  const at = document.activeElement === area ? area.selectionStart : settings.text.length;
+  const before = settings.text.slice(0, at).replace(/\n+$/, '');
+  const after = settings.text.slice(at).replace(/^\n+/, '');
+  settings.text = `${before}\n${markup.trim()}\n${after}`.replace(/\n{3,}/g, '\n\n');
+  onSettingChanged('text');
+  const caret = `${before}\n${markup.trim()}\n`.length;
+  area.setSelectionRange(caret, caret);
 }
 
 // -------------------------------------------------------------------- preview
@@ -733,6 +773,10 @@ async function runImport(file: File): Promise<void> {
       note.textContent = result.warnings[0] ?? `${file.name} holds no text that can be read.`;
       toast(result.warnings[0] ?? `${file.name} holds no text that can be read.`, true);
       return;
+    }
+    clearPictures('pdf-');
+    if (result.images) {
+      await Promise.all(result.images.map((picture) => addPicture(picture.id, picture.dataUrl).catch(() => undefined)));
     }
     settings.text = result.text;
     exportTitle = safeFilename(file.name);

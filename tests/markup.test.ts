@@ -68,6 +68,24 @@ describe('parseBlocks', () => {
     expect(blocks[1].indentSpaces).toBe(4);
   });
 
+  it('reads a diagram and its caption', () => {
+    const blocks = parseBlocks('Before.\n![Figure 1. The cycle](pdf-3-1)\nAfter.', true);
+    expect(blocks.map((b) => b.kind)).toEqual(['paragraph', 'image', 'caption', 'paragraph']);
+    expect(blocks[1].src).toBe('pdf-3-1');
+    expect(blocks[2].text).toBe('Figure 1. The cycle');
+  });
+
+  it('reads a diagram with no caption', () => {
+    const blocks = parseBlocks('![](pdf-3-1)', true);
+    expect(blocks.map((b) => b.kind)).toEqual(['image']);
+  });
+
+  it('keeps diagrams even with markdown reading off', () => {
+    const blocks = parseBlocks('# not a heading\n![A chart](fig-9)', false);
+    expect(blocks.map((b) => b.kind)).toEqual(['paragraph', 'image', 'caption']);
+    expect(blocks[1].src).toBe('fig-9');
+  });
+
   it('drops the blank lines at the end of a document', () => {
     expect(kinds('text\n\n\n')).toEqual(['paragraph']);
   });

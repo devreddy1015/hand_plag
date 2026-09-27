@@ -17,6 +17,13 @@ export type PageNumberMode = 'none' | 'printed' | 'handwritten';
 /** How the finished page is presented: flat art, a flatbed scan, or a phone photo. */
 export type FinishLook = 'none' | 'scan' | 'photo';
 
+/**
+ * What a writer does with a diagram from the source document: copy it out in
+ * pen, as a student copies a figure off the board, or stick the printed thing
+ * onto the page.
+ */
+export type DiagramStyle = 'sketch' | 'pasted';
+
 /** Margins in millimetres. */
 export interface Margins {
   top: number;
@@ -115,6 +122,14 @@ export interface Settings {
   texture: boolean;
   finish: FinishLook;
 
+  /** Keep diagrams from the source, and how to put them on the page. */
+  diagrams: boolean;
+  diagramStyle: DiagramStyle;
+  /** Rule a box around each diagram, by hand. */
+  diagramFrame: boolean;
+  /** Width of a diagram as a fraction of the writing column. */
+  diagramScale: number;
+
   /** 0 = tidy, 1 = very messy. 0.5 is a natural default. */
   messiness: number;
   /** Rate of human corrections: crossed-out restarts and words squeezed in above the line. */
@@ -168,10 +183,24 @@ export interface InkStroke {
   taper?: boolean;
 }
 
+/** A diagram placed on the page: copied out in pen, or stuck on. */
+export interface PlacedImage {
+  /** Key into the image registry handed to the renderer. */
+  id: string;
+  /** Top-left corner in layout units. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Radians. Nothing is ever drawn or stuck on perfectly square. */
+  rotation: number;
+}
+
 export interface PageLayout {
   index: number;
   glyphs: PlacedGlyph[];
   strokes: InkStroke[];
+  images: PlacedImage[];
 }
 
 /** One rectangle of writable lines. Pages with two columns have two. */

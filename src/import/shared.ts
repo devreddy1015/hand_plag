@@ -1,5 +1,14 @@
 /** Pieces shared by the file importers. */
 
+/** A picture taken out of a document, ready to be drawn on the page. */
+export interface ImportedImage {
+  /** Key referred to by `![caption](id)` in the text. */
+  id: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export interface ImportResult {
   /** Structured plain text, ready for the layout engine. */
   text: string;
@@ -7,6 +16,8 @@ export interface ImportResult {
   pageCount: number;
   /** Things worth telling the reader about (dropped headers, missing text). */
   warnings: string[];
+  /** Diagrams found in the document, keyed by the ids used in `text`. */
+  images?: ImportedImage[];
 }
 
 export type Progress = (done: number, total: number) => void;

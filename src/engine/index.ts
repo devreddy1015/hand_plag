@@ -8,7 +8,7 @@ export * from './types';
 export { DEFAULT_SETTINGS, SAMPLE_TEXT, withDefaults } from './defaults';
 export { layoutDocument, PAGE_BREAK, PEN_INK_VARIATION, type LayoutOptions } from './layout';
 export { EM_BOLD, EM_ITALIC, EM_UNDERLINE, parseBlocks, type Block, type BlockKind } from './markup';
-export { releaseLayers, renderPage, type RenderOptions } from './render';
+export { releaseLayers, releaseSketches, renderPage, type RenderOptions } from './render';
 export { MM, PAPER_SIZES, drawPaper, findPaperSize, get2d, pageGeometry, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
 export {
   DEFAULT_FEATURES,

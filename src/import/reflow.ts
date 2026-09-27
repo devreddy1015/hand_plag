@@ -18,9 +18,11 @@ export interface PdfOptions {
   detectHeadings: boolean;
   /** Drop running headers, footers and page numbers. */
   dropRunningHeads: boolean;
+  /** Bring the diagrams over as well as the words. */
+  diagrams: boolean;
 }
 
-export const DEFAULT_PDF_OPTIONS: PdfOptions = { keepPageBreaks: false, detectHeadings: true, dropRunningHeads: true };
+export const DEFAULT_PDF_OPTIONS: PdfOptions = { keepPageBreaks: false, detectHeadings: true, dropRunningHeads: true, diagrams: true };
 
 /** One positioned run of text, as pdf.js reports it. */
 export interface TextRun {
@@ -42,11 +44,23 @@ export interface Line {
   column: number;
 }
 
+/** A figure found on the page, ready to be written into the flow. */
+export interface PageFigure {
+  /** Key of the picture in the image registry. */
+  id: string;
+  /** Top and bottom of the figure, measured down from the top of the page. */
+  top: number;
+  bottom: number;
+  caption: string;
+}
+
 export interface PageLines {
   index: number;
   width: number;
   height: number;
   lines: Line[];
+  /** Diagrams found on this page, if they were looked for. */
+  figures?: PageFigure[];
 }
 
 /** Lines, then columns, then paragraphs: the whole reconstruction. */
@@ -247,8 +261,10 @@ function inMargin(line: Line, page: PageLines): boolean {
 
 /** One block of the rebuilt document, before it is written out as text. */
 interface OutBlock {
-  kind: 'paragraph' | 'heading' | 'list' | 'pagebreak';
+  kind: 'paragraph' | 'heading' | 'list' | 'pagebreak' | 'image';
   text: string;
+  /** Image blocks: the key of the picture. */
+  src?: string;
   /** Left edge of the block's first line, used to spot indented lists. */
   indent: number;
   level: number;
@@ -319,7 +335,14 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
       previous = null;
     }
     previousOnThisPage = false;
+    const figures = [...(page.figures ?? [])].sort((a, b) => a.top - b.top);
+    let nextFigure = 0;
+    const writeFigure = () => {
+      const figure = figures[nextFigure++];
+      emit({ kind: 'image', text: figure.caption, indent: 0, src: figure.id });
+    };
     for (const line of page.lines) {
+      while (nextFigure < figures.length && figures[nextFigure].top <= line.y) writeFigure();
       // Vertical space is only meaningful between two lines of the same page
       // and the same column.
       const gapAbove = previousOnThisPage && previous && previous.column === line.column ? line.y - previous.y : null;
@@ -376,6 +399,7 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
       previous = line;
       previousOnThisPage = true;
     }
+    while (nextFigure < figures.length) writeFigure();
   }
   flush();
 
@@ -384,6 +408,8 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
   const out = blocks.map((b) => {
     if (b.kind === 'heading') return `${'#'.repeat(Math.min(3, Math.max(1, b.level)))} ${b.text}`;
     if (b.kind === 'list') return `${b.marker} ${b.text}`;
+    // Brackets inside a caption would close the markup early.
+    if (b.kind === 'image') return `![${b.text.replace(/[[\]()]/g, ' ').trim()}](${b.src ?? ''})`;
     return b.text;
   });
   return out

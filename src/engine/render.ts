@@ -1,6 +1,6 @@
 import { drawPaper, get2d, MM, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
 import { clamp, hashInts, mulberry32 } from './random';
-import type { DocumentLayout, InkStroke, PenType, PlacedGlyph, Settings } from './types';
+import type { DocumentLayout, InkStroke, PenType, PlacedGlyph, PlacedImage, Settings } from './types';
 
 interface PenStyle {
   /** Extra outline at full pressure, as a fraction of the font size. */
@@ -46,6 +46,8 @@ export interface RenderOptions {
   /** CSS font-family list, e.g. `"Caveat", "Kalam"`. */
   fontStack: string;
   createCanvas: CanvasFactory;
+  /** The picture for a placed diagram, or null if it is not to hand. */
+  images?: (id: string) => CanvasImageSource | null;
 }
 
 const layerPool = new Map<string, AnyCanvas>();
@@ -91,9 +93,14 @@ export function renderPage(
   ctx.filter = 'none';
   drawPaper(ctx, geom, s, scale, pageIndex, createCanvas);
 
+  const page0 = doc.pages[pageIndex];
+  if (s.diagrams && s.diagramStyle === 'pasted' && page0 && page0.images.length > 0) {
+    drawPastedImages(ctx, page0.images, opts);
+  }
+
   // Ink from the other side of the sheet, showing faintly through the paper.
   const back = s.features.showThrough ? doc.pages[pageIndex + 1] : undefined;
-  if (back && (back.glyphs.length > 0 || back.strokes.length > 0)) {
+  if (back && (back.glyphs.length > 0 || back.strokes.length > 0 || back.images.length > 0)) {
     const bleedCanvas = layer(w, h, 'back', createCanvas);
     const bleed = get2d(bleedCanvas);
     drawInk(bleed, doc, pageIndex + 1, s, opts, true);
@@ -111,7 +118,7 @@ export function renderPage(
   }
 
   const page = doc.pages[pageIndex];
-  if (page && (page.glyphs.length > 0 || page.strokes.length > 0)) {
+  if (page && (page.glyphs.length > 0 || page.strokes.length > 0 || page.images.length > 0)) {
     const inkCanvas = layer(w, h, 'ink', createCanvas);
     const ink = get2d(inkCanvas);
     drawInk(ink, doc, pageIndex, s, opts, false);
@@ -157,6 +164,10 @@ function drawInk(
   const steps = nibWidth > 0.01 ? clamp(Math.round((nibWidth * scale) / NIB_SPACING_PX) + 1, 3, NIB_STEPS_MAX) : 1;
   const nx = Math.cos(pen.nibAngle * (Math.PI / 180));
   const ny = Math.sin(pen.nibAngle * (Math.PI / 180));
+
+  if (s.diagrams && s.diagramStyle === 'sketch' && page.images.length > 0) {
+    drawSketchedImages(ctx, page.images, s, opts);
+  }
 
   ctx.save();
   ctx.font = `${fontPx}px ${opts.fontStack}`;
@@ -215,6 +226,122 @@ function drawInk(
       ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     }
     ctx.restore();
+  }
+}
+
+const sketchCache = new Map<string, AnyCanvas>();
+
+/**
+ * A diagram copied out in pen.
+ *
+ * Most figures in a document are line art on white, so taking the luminance
+ * of each pixel as how much ink belongs there, and drawing that in the
+ * writer's own ink, reads as the figure having been copied by hand rather
+ * than pasted in.
+ *
+ * A photograph is a different matter: it has no lines to copy, and tracing it
+ * this way would leave a dark smear. Continuous-tone pictures are therefore
+ * left as pictures — which is what ends up on a real page too, printed and
+ * stuck on. The conversion is cached per size and colour, because it is the
+ * one part of a page that costs real work.
+ */
+function inkTracing(source: CanvasImageSource, key: string, w: number, h: number, color: string, createCanvas: CanvasFactory): AnyCanvas {
+  const id = `${key}:${color}:${w}x${h}`;
+  const cached = sketchCache.get(id);
+  if (cached) return cached;
+  if (sketchCache.size > 12) sketchCache.clear();
+
+  const canvas = createCanvas(w, h);
+  const ctx = get2d(canvas);
+  ctx.drawImage(source, 0, 0, w, h);
+  const image = ctx.getImageData(0, 0, w, h);
+  const data = image.data;
+
+  if (!isLineArt(data)) {
+    sketchCache.set(id, canvas);
+    return canvas;
+  }
+
+  const [r, g, b] = parseHex(color);
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3] / 255;
+    // Transparent areas are paper, so they count as white.
+    const lit = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) * alpha + 255 * (1 - alpha);
+    const ink = clamp((208 - lit) / 118, 0, 1);
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+    data[i + 3] = Math.round(255 * Math.pow(ink, 0.85));
+  }
+  ctx.putImageData(image, 0, 0);
+  sketchCache.set(id, canvas);
+  return canvas;
+}
+
+/**
+ * Line art is mostly paper: a chart, a table or a drawing leaves the great
+ * majority of its area white. A photograph does not, so the two can be told
+ * apart by how much of the picture is nearly white.
+ */
+function isLineArt(data: Uint8ClampedArray): boolean {
+  let pale = 0;
+  let counted = 0;
+  // Every eighth pixel is plenty to judge this by.
+  for (let i = 0; i < data.length; i += 32) {
+    const lit = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    if (data[i + 3] < 24 || lit > 232) pale++;
+    counted++;
+  }
+  return counted === 0 || pale / counted > 0.55;
+}
+
+/** Release the cached diagram tracings (they are keyed by ink colour and size). */
+export function releaseSketches(): void {
+  sketchCache.clear();
+}
+
+function placeImage(ctx: Ctx2D, image: PlacedImage, scale: number, draw: (w: number, h: number) => void): void {
+  const w = Math.max(1, Math.round(image.width * scale));
+  const h = Math.max(1, Math.round(image.height * scale));
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.translate((image.x + image.width / 2) * scale, (image.y + image.height / 2) * scale);
+  if (image.rotation !== 0) ctx.rotate(image.rotation);
+  ctx.translate(-w / 2, -h / 2);
+  draw(w, h);
+  ctx.restore();
+}
+
+function drawSketchedImages(ctx: Ctx2D, images: PlacedImage[], s: Settings, opts: RenderOptions): void {
+  const lookup = opts.images;
+  if (!lookup) return;
+  for (const image of images) {
+    const source = lookup(image.id);
+    if (!source) continue;
+    placeImage(ctx, image, opts.scale, (w, h) => {
+      const traced = inkTracing(source, image.id, w, h, s.inkColor, opts.createCanvas);
+      ctx.drawImage(traced as CanvasImageSource, 0, 0);
+    });
+  }
+}
+
+/** A printed figure stuck onto the sheet, with the shadow that implies. */
+function drawPastedImages(ctx: Ctx2D, images: PlacedImage[], opts: RenderOptions): void {
+  const lookup = opts.images;
+  if (!lookup) return;
+  for (const image of images) {
+    const source = lookup(image.id);
+    if (!source) continue;
+    placeImage(ctx, image, opts.scale, (w, h) => {
+      ctx.globalAlpha = 0.28;
+      if (supportsFilter(ctx)) ctx.filter = `blur(${Math.max(1, 0.5 * MM * opts.scale).toFixed(1)}px)`;
+      ctx.fillStyle = 'rgba(40,36,30,0.9)';
+      ctx.fillRect(2, 3, w, h);
+      ctx.filter = 'none';
+      ctx.globalAlpha = 1;
+      ctx.drawImage(source, 0, 0, w, h);
+    });
   }
 }
 

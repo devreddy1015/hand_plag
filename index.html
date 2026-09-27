@@ -68,6 +68,10 @@
               <button type="button" class="ghost small" id="reflow-text" title="Join lines that were wrapped at a fixed width">
                 Join wrapped lines
               </button>
+              <label class="button ghost small">
+                Add a diagram
+                <input type="file" id="diagram-upload" accept="image/*" hidden />
+              </label>
               <button type="button" class="ghost small" id="sample-text">Sample</button>
               <button type="button" class="ghost small" id="clear-text">Clear</button>
             </div>
@@ -84,6 +88,7 @@
             <label class="check"><input type="checkbox" id="opt-page-breaks" /> <span>Keep the source page breaks</span></label>
             <label class="check"><input type="checkbox" id="opt-headings" /> <span>Recover headings</span></label>
             <label class="check"><input type="checkbox" id="opt-heads" /> <span>Drop running headers, footers and page numbers</span></label>
+            <label class="check"><input type="checkbox" id="opt-diagrams" /> <span>Bring the diagrams and charts over</span></label>
             <p class="hint">
               PDFs are read in this browser with pdf.js. A PDF of scanned photographs holds no text to read, so it needs OCR first.
             </p>
@@ -271,6 +276,29 @@
               <span>Paragraph indent <output data-for="paragraphIndent" data-format="mm"></output></span>
               <input type="range" data-key="paragraphIndent" min="0" max="25" step="1" />
             </label>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Diagrams</h2>
+              <span class="muted" id="diagram-count"></span>
+            </div>
+            <div class="segmented" data-segmented="diagramStyle">
+              <button type="button" data-value="sketch">Copied out in pen</button>
+              <button type="button" data-value="pasted">Stuck on the page</button>
+            </div>
+            <label class="field range">
+              <span>Diagram width <output data-for="diagramScale" data-format="pct"></output></span>
+              <input type="range" data-key="diagramScale" min="0.25" max="1" step="0.01" />
+            </label>
+            <div class="checks">
+              <label class="check"><input type="checkbox" data-key="diagrams" /> <span>Draw the diagrams at all</span></label>
+              <label class="check"><input type="checkbox" data-key="diagramFrame" /> <span>Rule a box around each one</span></label>
+            </div>
+            <p class="hint">
+              Drag a picture onto the page to add one, or write <code>![caption](id)</code> yourself. A figure with no picture
+              behind it leaves a ruled box, the way a page does before the diagram is drawn in.
+            </p>
           </section>
 
           <section class="card">

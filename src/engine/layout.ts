@@ -1,4 +1,4 @@
-import { EM_BOLD, EM_ITALIC, EM_UNDERLINE, parseBlocks } from './markup';
+import { EM_BOLD, EM_ITALIC, EM_UNDERLINE, parseBlocks, type Block } from './markup';
 import { clamp, createDrift, createNoise1D, gaussian, hashInts, hashString, mulberry32, smoothstep, type Rng } from './random';
 import { gapAfterFactor, gapBeforeFactor, hyphenPoint, isRtlParagraph, tokenize, type Token } from './segment';
 import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, Settings, TextArea } from './types';
@@ -128,6 +128,8 @@ interface Line {
   underline: boolean;
   /** Draw a bullet dot at the left of the line. */
   bullet: boolean;
+  /** Centre the line in the column, as a caption sits under its figure. */
+  center: boolean;
   /** Font size of this line's letters, for strokes drawn around them. */
   fontPx: number;
 }
@@ -143,6 +145,11 @@ export interface LayoutOptions {
    * Devanagari inside a Latin font) match the main font's letter size.
    */
   unitScale?: (unit: string) => number;
+  /**
+   * Natural size of a diagram, in whatever units, so the layout can work out
+   * its shape. Returning null leaves room for a figure nobody has drawn yet.
+   */
+  imageSize?: (src: string) => { width: number; height: number } | null;
 }
 
 /**
@@ -331,7 +338,7 @@ export function layoutDocument(
 
   const pages: PageLayout[] = [];
   const pageAt = (i: number): PageLayout => {
-    while (pages.length <= i) pages.push({ index: pages.length, glyphs: [], strokes: [] });
+    while (pages.length <= i) pages.push({ index: pages.length, glyphs: [], strokes: [], images: [] });
     return pages[i];
   };
 
@@ -430,7 +437,12 @@ export function layoutDocument(
     const baseY = slot.y - BASELINE_LIFT * spacing + baseDrift + gaussian(rng) * amp.baseline * 0.5;
 
     const avail = area.right - area.left - line.indent;
-    const startX = area.left + line.indent;
+    let startX = area.left + line.indent;
+    if (line.center) {
+      let total = 0;
+      for (const item of line.items) total += item.gap * gapDrift * line.squeeze + item.word.width;
+      startX = area.left + Math.max(line.indent, (area.right - area.left - total) / 2);
+    }
     const squeeze = line.squeeze;
     /** Letters crowd together as the writer runs out of room at the margin. */
     const crowd = (rel: number): number =>
@@ -540,6 +552,55 @@ export function layoutDocument(
     }
   };
 
+  // ------------------------------------------------------------ diagrams
+
+  const imageSize = options.imageSize ?? (() => null);
+
+  /**
+   * A diagram takes whole lines: the writer leaves a gap of the right shape,
+   * draws in it, and carries on underneath. It is never split over two pages,
+   * because `takeSlot` moves on when the run of lines does not fit.
+   */
+  const placeImage = (block: Block, bi: number): void => {
+    const geomNow = geomFor(pi);
+    const areaNow = geomNow.areas[Math.min(ai, geomNow.areas.length - 1)];
+    const column = areaNow.right - areaNow.left;
+    const natural = imageSize(block.src);
+    const aspect = natural && natural.width > 0 && natural.height > 0 ? natural.height / natural.width : 0.7;
+
+    let width = column * clamp(s.diagramScale, 0.15, 1);
+    let height = width * aspect;
+    // Never taller than most of a column, or it could never be placed at all.
+    const maxHeight = Math.max(1, Math.floor(areaNow.lines.length * 0.85)) * spacing - spacing * 0.4;
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = height / aspect;
+    }
+    const slots = Math.max(1, Math.ceil((height + spacing * 0.45) / spacing));
+
+    const slot = takeSlot(slots);
+    if (!slot) {
+      truncated += 1;
+      return;
+    }
+    globalLine += slots;
+
+    const rng = mulberry32(hashInts(s.seed, 0x1a3e, bi));
+    const bandTop = slot.y - (slots - 1) * spacing - spacing * 0.78;
+    const free = slots * spacing - spacing * 0.3 - height;
+    const x = slot.area.left + (slot.area.right - slot.area.left - width) / 2 + gaussian(rng) * spacing * 0.07;
+    const y = bandTop + Math.max(0, free) / 2;
+    slot.page.images.push({
+      id: block.src,
+      x,
+      y,
+      width,
+      height,
+      rotation: gaussian(rng) * 0.9 * DEG * clamp(w.rotation, 0, 2) * clamp(s.messiness * 2, 0, 2),
+    });
+    if (s.diagramFrame || natural === null) slot.page.strokes.push(...frameStrokes(x, y, width, height, fontPx, rng));
+  };
+
   // ------------------------------------------------------------ blocks
 
   const blocks = parseBlocks(text, s.markdown);
@@ -556,6 +617,10 @@ export function layoutDocument(
       globalLine++;
       return;
     }
+    if (block.kind === 'image') {
+      if (s.diagrams) placeImage(block, bi);
+      return;
+    }
     if (block.kind === 'divider') {
       const slot = takeSlot(1);
       if (slot) {
@@ -570,7 +635,10 @@ export function layoutDocument(
     }
 
     const heading = block.kind === 'heading' ? HEADING_STYLE[block.level] ?? HEADING_STYLE[3] : null;
-    const sizeRatio = heading ? heading.scale : 1;
+    // A caption is written smaller and centred under the figure it belongs to.
+    const caption = block.kind === 'caption';
+    if (caption && !s.diagrams) return;
+    const sizeRatio = heading ? heading.scale : caption ? 0.88 : 1;
     const lineFontPx = fontPx * sizeRatio;
     const slots = sizeRatio >= 1.35 ? 2 : 1;
     const emAt = block.emphasis ? (o: number) => (o < block.emphasis!.length ? block.emphasis![o] : 0) : () => 0;
@@ -658,6 +726,7 @@ export function layoutDocument(
           slots,
           underline: heading?.underline ?? false,
           bullet: bullet && lineIndex === 0,
+          center: caption,
           fontPx: lineFontPx,
         },
         rtl,
@@ -745,10 +814,15 @@ export function layoutDocument(
 
   // ------------------------------------------------------------ page numbers
 
-  while (pages.length > 1 && pages[pages.length - 1].glyphs.length === 0 && pages[pages.length - 1].strokes.length === 0) {
+  while (
+    pages.length > 1 &&
+    pages[pages.length - 1].glyphs.length === 0 &&
+    pages[pages.length - 1].strokes.length === 0 &&
+    pages[pages.length - 1].images.length === 0
+  ) {
     pages.pop();
   }
-  if (pages.length === 0) pages.push({ index: 0, glyphs: [], strokes: [] });
+  if (pages.length === 0) pages.push({ index: 0, glyphs: [], strokes: [], images: [] });
 
   if (s.features.pageNumber === 'handwritten') {
     pages.forEach((page, i) => {
@@ -913,6 +987,29 @@ function strikeStroke(span: { from: number; to: number }, baseY: number, fontPx:
     shade: 0.15,
     taper: false,
   };
+}
+
+/**
+ * A box ruled round a figure by hand: four strokes, each overshooting the
+ * corner a little, because nobody stops exactly on it.
+ */
+function frameStrokes(x: number, y: number, w: number, h: number, fontPx: number, rng: Rng): InkStroke[] {
+  const over = fontPx * 0.07;
+  const bow = fontPx * 0.015;
+  const width = fontPx * 0.035;
+  const edge = (x0: number, y0: number, x1: number, y1: number): InkStroke => ({
+    points: handLine(x0, y0, x1, y1, rng, bow),
+    width,
+    opacity: 0.85,
+    shade: 0.05,
+    taper: true,
+  });
+  return [
+    edge(x - over, y, x + w + over, y),
+    edge(x + w, y - over, x + w, y + h + over),
+    edge(x + w + over, y + h, x - over, y + h),
+    edge(x, y + h + over, x, y - over),
+  ];
 }
 
 /** The caret that marks where a squeezed-in word belongs. */
