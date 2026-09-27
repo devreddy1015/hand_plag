@@ -37,6 +37,7 @@
           Import PDF, Word or text
           <input type="file" id="import-file" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
         </label>
+        <button type="button" class="ghost small" id="toggle-advanced" aria-pressed="false">All settings</button>
         <button type="button" class="ghost small" id="copy-style" title="Copy a link that carries these settings">Copy style link</button>
         <button type="button" class="ghost small" id="reset-all" title="Back to the default settings">Reset</button>
       </div>
@@ -65,7 +66,7 @@
                 Import file
                 <input type="file" id="import-text" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
               </label>
-              <button type="button" class="ghost small" id="reflow-text" title="Join lines that were wrapped at a fixed width">
+              <button type="button" class="ghost small" id="reflow-text" data-advanced title="Join lines that were wrapped at a fixed width">
                 Join wrapped lines
               </button>
               <label class="button ghost small">
@@ -76,14 +77,14 @@
               <button type="button" class="ghost small" id="clear-text">Clear</button>
             </div>
             <p class="hint" id="import-note" hidden></p>
-            <label class="check">
+            <label class="check" data-advanced>
               <input type="checkbox" data-key="markdown" />
               <span>Read structure: <code>#</code> headings, <code>-</code> lists, <code>**bold**</code></span>
             </label>
             <p class="hint">Put <code>[[page]]</code> on a line of its own to start a new sheet.</p>
           </section>
 
-          <section class="card">
+          <section class="card" data-advanced>
             <h2>Reading imported files</h2>
             <label class="check"><input type="checkbox" id="opt-page-breaks" /> <span>Keep the source page breaks</span></label>
             <label class="check"><input type="checkbox" id="opt-headings" /> <span>Recover headings</span></label>
@@ -114,7 +115,7 @@
                 <span>Size</span>
                 <select data-key="paperSize" id="paper-size"></select>
               </label>
-              <label class="field">
+              <label class="field" data-advanced>
                 <span>Ruling</span>
                 <select data-key="paperStyle">
                   <option value="ruled">Ruled</option>
@@ -142,7 +143,7 @@
                 <input type="color" data-key="paperColor" aria-label="Custom paper colour" />
               </div>
             </div>
-            <div class="grid-2">
+            <div class="grid-2" data-advanced>
               <label class="field">
                 <span>Rule colour</span>
                 <input type="color" data-key="ruleColor" />
@@ -156,7 +157,7 @@
               <label class="check"><input type="checkbox" data-key="landscape" /> <span>Landscape</span></label>
               <label class="check"><input type="checkbox" data-key="texture" /> <span>Paper grain</span></label>
             </div>
-            <fieldset class="margins">
+            <fieldset class="margins" data-advanced>
               <legend>Margins (mm)</legend>
               <label>Top <input type="number" data-key="margins.top" min="0" max="120" step="1" /></label>
               <label>Bottom <input type="number" data-key="margins.bottom" min="0" max="120" step="1" /></label>
@@ -165,7 +166,7 @@
             </fieldset>
           </section>
 
-          <section class="card">
+          <section class="card" data-advanced>
             <h2>Printed on the sheet</h2>
             <div class="grid-2">
               <label class="field">
@@ -259,20 +260,20 @@
               <span>Slant <output data-for="slant" data-format="deg"></output></span>
               <input type="range" data-key="slant" min="-15" max="25" step="1" />
             </label>
-            <label class="field range">
+            <label class="field range" data-advanced>
               <span>Letter spacing <output data-for="letterSpacing" data-format="signed-pct"></output></span>
               <input type="range" data-key="letterSpacing" min="-0.06" max="0.2" step="0.005" />
             </label>
-            <label class="field range">
+            <label class="field range" data-advanced>
               <span>Word spacing <output data-for="wordSpacing" data-format="times"></output></span>
               <input type="range" data-key="wordSpacing" min="0.5" max="3" step="0.05" />
             </label>
-            <label class="field range">
+            <label class="field range" data-advanced>
               <span>Fills the line <output data-for="lineFill" data-format="pct"></output></span>
               <input type="range" data-key="lineFill" min="0" max="1" step="0.05" />
             </label>
-            <p class="hint">At a high setting the writer crams, runs past the margin and hyphenates rather than leave a line short.</p>
-            <label class="field range">
+            <p class="hint" data-advanced>At a high setting the writer crams, runs past the margin and hyphenates rather than leave a line short.</p>
+            <label class="field range" data-advanced>
               <span>Paragraph indent <output data-for="paragraphIndent" data-format="mm"></output></span>
               <input type="range" data-key="paragraphIndent" min="0" max="25" step="1" />
             </label>
@@ -287,15 +288,15 @@
               <button type="button" data-value="sketch">Copied out in pen</button>
               <button type="button" data-value="pasted">Stuck on the page</button>
             </div>
-            <label class="field range">
+            <label class="field range" data-advanced>
               <span>Diagram width <output data-for="diagramScale" data-format="pct"></output></span>
               <input type="range" data-key="diagramScale" min="0.25" max="1" step="0.01" />
             </label>
-            <div class="checks">
+            <div class="checks" data-advanced>
               <label class="check"><input type="checkbox" data-key="diagrams" /> <span>Draw the diagrams at all</span></label>
               <label class="check"><input type="checkbox" data-key="diagramFrame" /> <span>Rule a box around each one</span></label>
             </div>
-            <p class="hint">
+            <p class="hint" data-advanced>
               Drag a picture onto the page to add one, or write <code>![caption](id)</code> yourself. A figure with no picture
               behind it leaves a ruled box, the way a page does before the diagram is drawn in.
             </p>
@@ -324,7 +325,7 @@
                 <input type="color" data-key="inkColor" aria-label="Custom ink colour" />
               </div>
             </div>
-            <label class="field range">
+            <label class="field range" data-advanced>
               <span>Ink weight <output data-for="inkWeight" data-format="times"></output></span>
               <input type="range" data-key="inkWeight" min="0" max="2.5" step="0.05" />
             </label>
@@ -350,10 +351,10 @@
               Corrections are the things a person does and a printer never would: a word started wrong and crossed out, one squeezed in
               above a caret, a dot of ink left on the page.
             </p>
-            <p class="hint" id="seed-note"></p>
+            <p class="hint" id="seed-note" data-advanced></p>
           </section>
 
-          <section class="card">
+          <section class="card" data-advanced>
             <h2>Fine tuning</h2>
             <label class="field range">
               <span>Baseline wobble <output data-for="jitter.baseline" data-format="times"></output></span>
@@ -412,7 +413,7 @@
                   <option value="400">400 DPI: very large</option>
                 </select>
               </label>
-              <label class="field">
+              <label class="field" data-advanced>
                 <span>Pages</span>
                 <select id="page-range">
                   <option value="all">Every page</option>
@@ -421,11 +422,11 @@
                 </select>
               </label>
             </div>
-            <label class="field" id="range-field" hidden>
+            <label class="field" id="range-field" data-advanced hidden>
               <span>Which pages</span>
               <input type="text" id="range-text" placeholder="e.g. 1-4, 7, 11-15" />
             </label>
-            <label class="check"><input type="checkbox" id="lossless" /> <span>Lossless images (bigger files)</span></label>
+            <label class="check" data-advanced><input type="checkbox" id="lossless" /> <span>Lossless images (bigger files)</span></label>
             <div class="row">
               <button type="button" class="primary" id="export-pdf">Download PDF</button>
               <button type="button" id="export-png">Download images</button>
@@ -436,7 +437,7 @@
             <p class="hint" id="export-estimate"></p>
           </section>
 
-          <section class="card">
+          <section class="card" data-advanced>
             <h2>Printing it out</h2>
             <p class="hint">
               Print the PDF at 100% scale, not “fit to page”, or the margins and the ruling will no longer match real paper.

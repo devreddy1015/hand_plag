@@ -22,6 +22,14 @@ boundaries, and drops the running headers, footers and page numbers that should 
 written out again. A 15-page PDF becomes about 30 handwritten pages in a couple of
 seconds.
 
+**Copies the equations out.** Mathematics does not survive being read back as text: a
+displayed formula is a two-dimensional arrangement of glyph runs, so reading it line by
+line turns one equation into three lines of nonsense. Displayed equations are found
+instead — by the fonts they are set in (`CMMI`, `CMSY` and `CMEX` are TeX's maths fonts),
+by being set in from the margin, and by being stacked more tightly than prose — and cut
+out of the page, then written onto the sheet at the size of the handwriting around them.
+Inline maths inside a paragraph is left where it is.
+
 **Brings the diagrams with it.** A PDF never says "this is a figure" either, so pages
 that draw something are rasterised, the text is masked out of the picture, and what is
 left is treated as figures: connected blocks of drawing, joined up, measured, and cut
@@ -68,6 +76,10 @@ the paper.
 noise), or a photo on a desk (keystoned, lit from one side, casting a shadow). Export a
 multi-page PDF or PNG/JPEG images at 150–400 DPI, all pages or a range.
 
+The panel opens with the settings most people need — the paper, the hand, the pen and the
+download button. **All settings** in the header brings out the rest: margins, printed
+furniture, the ten realism weights, page ranges and the like. The choice is remembered.
+
 ## Run it
 
 ```bash
@@ -113,7 +125,8 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 | `src/engine/markup.ts` | The small Markdown subset that maps onto things a hand can do. |
 | `src/engine/segment.ts` | Grapheme clusters, whole-word units for scripts that need shaping, CJK break points, script detection, hyphenation points. |
 | `src/import/reflow.ts` | Rebuilding a document from positioned text: lines, columns, paragraphs, headings, lists, running heads. Pure, and tested on its own. |
-| `src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, and which text belongs to which figure. Pure, and tested on its own. |
+| `src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, which text belongs to which figure, and fitting a box to the ink. Pure, and tested on its own. |
+| `src/import/math.ts` | Finding the displayed equations, so they can be copied out rather than mangled. Pure, and tested on its own. |
 | `src/images.ts` | The pictures a document refers to, decoded and ready to draw. |
 | `src/import/pdf.ts`, `docx.ts` | The readers themselves, loaded on first use. |
 | `src/fonts.ts` | Font catalog, fallback stacks, per-script size matching, custom font upload. `@font-face` rules load per font, on demand. |

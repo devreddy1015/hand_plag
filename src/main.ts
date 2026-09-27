@@ -17,6 +17,7 @@ import { drawPage, drawPaperOnly, prepare, type Prepared } from './pipeline';
 import { PRESETS, applyPreset } from './ui/presets';
 
 const STORAGE_KEY = 'handscript.settings.v2';
+const ADVANCED_KEY = 'handscript.advanced.v1';
 const IMPORT_KEY = 'handscript.import.v1';
 
 /** Settings that only change how a page is painted, not where the letters go. */
@@ -269,6 +270,7 @@ function bindControls(): void {
   }
 
   buildTabs();
+  bindAdvanced();
   buildPresets();
   buildTemplates();
   buildFonts();
@@ -388,6 +390,38 @@ function bindControls(): void {
 
   bindKeyboard();
   bindDragAndDrop();
+}
+
+/**
+ * Most people want a hand, a sheet of paper and a PDF button. Everything else
+ * is kept behind one switch rather than left on the page, so the app can be
+ * used without reading it all first.
+ */
+function bindAdvanced(): void {
+  const panel = $<HTMLElement>('.panel');
+  const button = $<HTMLButtonElement>('#toggle-advanced');
+  let shown = false;
+  try {
+    shown = localStorage.getItem(ADVANCED_KEY) === '1';
+  } catch {
+    // Storage blocked: start simple.
+  }
+  const apply = () => {
+    panel.classList.toggle('simple', !shown);
+    button.setAttribute('aria-pressed', String(shown));
+    button.textContent = shown ? 'Fewer settings' : 'All settings';
+    renderPreview();
+  };
+  button.addEventListener('click', () => {
+    shown = !shown;
+    try {
+      localStorage.setItem(ADVANCED_KEY, shown ? '1' : '0');
+    } catch {
+      // Not worth reporting.
+    }
+    apply();
+  });
+  apply();
 }
 
 function buildTabs(): void {

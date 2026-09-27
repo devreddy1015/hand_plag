@@ -51,6 +51,17 @@
   display: none !important;
 }
 
+/* The panel starts with the settings most people need; the rest are one
+   click away, so the app is approachable without being cut down. */
+.panel.simple [data-advanced] {
+  display: none !important;
+}
+
+/* A pair whose other half is hidden should not leave a gap. */
+.panel.simple .grid-2:has(> [data-advanced]) {
+  grid-template-columns: 1fr;
+}
+
 html,
 body {
   margin: 0;
