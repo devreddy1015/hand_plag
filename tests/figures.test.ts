@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { absorbText, findFigureBoxes, type Box } from '../src/import/figures';
+import { absorbText, findFigureBoxes, growToInk, roomAround, type Box } from '../src/import/figures';
 import type { Line } from '../src/import/reflow';
 
 const CELL = 10;
@@ -96,7 +96,7 @@ describe('findFigureBoxes', () => {
 
 const BODY = 11;
 function line(text: string, y: number, x0 = 60, x1 = 500): Line {
-  return { y, x0, x1, size: BODY, text, column: 0 };
+  return { y, x0, x1, size: BODY, text, column: 0, math: 0 };
 }
 
 describe('absorbText', () => {
@@ -130,5 +130,55 @@ describe('absorbText', () => {
     const { figures, consumed } = absorbText([figure], [far], BODY);
     expect(figures[0].caption).toBe('');
     expect(consumed.has(far)).toBe(false);
+  });
+});
+
+describe('roomAround and growToInk', () => {
+  const above = line('The line of prose above.', 100, 60, 400);
+  const below = line('The line of prose below.', 200, 60, 400);
+  const box: Box = { x: 150, y: 120, width: 200, height: 40 };
+
+  it('measures the band between the lines around it', () => {
+    // A generous allowance, so the lines are what bind rather than the cap.
+    const room = roomAround(box, [above, below], new Set(), 40);
+    expect(room.top).toBeCloseTo(100 + BODY * 0.35 + 0.5, 5);
+    expect(room.bottom).toBeCloseTo(200 - BODY * 1.05 - 0.5, 5);
+  });
+
+  it('never allows more growth than it is asked to', () => {
+    const room = roomAround(box, [above, below], new Set(), 5);
+    expect(room.top).toBe(box.y - 5);
+    expect(room.bottom).toBe(box.y + box.height + 5);
+  });
+
+  it('ignores the lines that are part of the thing being measured', () => {
+    const room = roomAround(box, [above, below], new Set([above, below]));
+    expect(room.top).toBe(box.y - 9);
+    expect(room.bottom).toBe(box.y + box.height + 9);
+  });
+
+  /** Ink everywhere inside this rectangle, and nowhere else. */
+  const inkIn = (r: Box) => (x: number, y: number, w: number, h: number) =>
+    x < r.x + r.width && r.x < x + w && y < r.y + r.height && r.y < y + h;
+
+  it('grows a box until it stops touching ink', () => {
+    const ink = { x: 140, y: 110, width: 220, height: 60 };
+    const grown = growToInk({ x: 150, y: 120, width: 200, height: 40 }, inkIn(ink), { top: 100, bottom: 200, sideways: 20 });
+    expect(grown.y).toBeLessThanOrEqual(110.5);
+    expect(grown.y + grown.height).toBeGreaterThanOrEqual(169.5);
+    expect(grown.x).toBeLessThanOrEqual(140.5);
+  });
+
+  it('never grows past the room it has', () => {
+    const everywhere = () => true;
+    const grown = growToInk({ x: 150, y: 120, width: 200, height: 40 }, everywhere, { top: 115, bottom: 165, sideways: 3 });
+    expect(grown.y).toBeGreaterThanOrEqual(115);
+    expect(grown.y + grown.height).toBeLessThanOrEqual(165);
+  });
+
+  it('pulls a box back when it already overlaps the line above', () => {
+    // The box starts inside the line above; the room is the boundary.
+    const grown = growToInk({ x: 150, y: 95, width: 200, height: 70 }, () => false, roomAround(box, [above, below], new Set()));
+    expect(grown.y).toBeGreaterThanOrEqual(100 + BODY * 0.35);
   });
 });

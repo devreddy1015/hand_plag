@@ -11,7 +11,7 @@ import {
   type Settings,
 } from './engine';
 import { createMeasurer, cssFontStack, fallbackScaler, findFont, fontFamiliesFor, fontMetrics, loadFonts } from './fonts';
-import { pictureImage, pictureSize } from './images';
+import { pictureImage, pictureMetrics } from './images';
 
 export interface Prepared {
   settings: Settings;
@@ -39,9 +39,28 @@ export async function prepare(settings: Settings): Promise<Prepared> {
   const doc = layoutDocument(settings.text, geometryOf, fontPx, settings, createMeasurer(fontStack, fontPx), {
     connected: font.connected,
     unitScale: fallbackScaler(font, families),
-    imageSize: pictureSize,
+    imageSize: (src) => imageSizeFor(src, settings, geometry.spacing),
   });
   return { settings, doc, fontStack };
+}
+
+/**
+ * How big a picture wants to be. An equation cut out of a document is drawn at
+ * the size of the writing around it — work out how much bigger the hand is
+ * than the type it came from, and scale it by that.
+ */
+function imageSizeFor(src: string, settings: Settings, spacing: number): { width: number; height: number; widthUnits?: number } | null {
+  const picture = pictureMetrics(src);
+  if (!picture) return null;
+  if (picture.kind !== 'math' || !picture.pointWidth || !picture.sourceSize) {
+    return { width: picture.width, height: picture.height };
+  }
+  const PT = 96 / 72;
+  // x-height is close enough to 45% of the type size for this purpose.
+  const sourceXHeight = picture.sourceSize * PT * 0.45;
+  const handXHeight = settings.letterSize * spacing;
+  const scale = sourceXHeight > 0 ? handXHeight / sourceXHeight : 1;
+  return { width: picture.width, height: picture.height, widthUnits: picture.pointWidth * PT * scale };
 }
 
 export function drawPage(target: AnyCanvas, prepared: Prepared, pageIndex: number, scale: number): void {

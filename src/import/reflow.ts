@@ -31,6 +31,8 @@ export interface TextRun {
   transform: number[];
   width: number;
   height: number;
+  /** Set when the run is drawn in a font only used for mathematics. */
+  math?: boolean;
 }
 
 export interface Line {
@@ -42,6 +44,8 @@ export interface Line {
   text: string;
   /** Column this line belongs to (0 for single-column pages). */
   column: number;
+  /** Share of the line, by length, set in a mathematics font. */
+  math: number;
 }
 
 /** A figure found on the page, ready to be written into the flow. */
@@ -77,6 +81,7 @@ interface Run {
   width: number;
   size: number;
   str: string;
+  math: boolean;
 }
 
 /**
@@ -95,7 +100,7 @@ export function buildLines(items: TextRun[], pageHeight: number, pageWidth: numb
     // Skip text turned on its side: page furniture, watermarks, figure labels.
     if (Math.abs(t[1]) > Math.abs(t[0]) * 0.35 + 0.01) continue;
     const size = Math.max(Math.hypot(t[2], t[3]), item.height || 0) || 10;
-    runs.push({ y: pageHeight - t[5], x: t[4], width: item.width, size, str: item.str });
+    runs.push({ y: pageHeight - t[5], x: t[4], width: item.width, size, str: item.str, math: item.math === true });
   }
   if (runs.length === 0) return [];
 
@@ -128,12 +133,17 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
     let text = '';
     let cursor = -Infinity;
     let size = 0;
+    let mathChars = 0;
+    let allChars = 0;
     for (const run of bucket) {
       const gap = run.x - cursor;
       if (text !== '' && gap > run.size * 0.18 && !/\s$/.test(text) && !/^\s/.test(run.str)) text += ' ';
       text += run.str;
       cursor = run.x + run.width;
       size = Math.max(size, run.size);
+      const length = run.str.trim().length;
+      allChars += length;
+      if (run.math) mathChars += length;
     }
     const trimmed = cleanText(text);
     if (trimmed !== '') {
@@ -144,6 +154,7 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
         size,
         text: trimmed,
         column,
+        math: allChars > 0 ? mathChars / allChars : 0,
       });
     }
     bucket = [];

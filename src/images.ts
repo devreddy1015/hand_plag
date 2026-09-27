@@ -14,12 +14,17 @@ export interface Picture {
   image: HTMLImageElement;
   width: number;
   height: number;
+  /** An equation is drawn at the size of the writing around it. */
+  kind: 'figure' | 'math';
+  /** Width on the source page in points, and the size of its running text. */
+  pointWidth?: number;
+  sourceSize?: number;
 }
 
 const pictures = new Map<string, Picture>();
 
 /** Decode and keep a picture. Replaces any picture already under that key. */
-export async function addPicture(id: string, dataUrl: string): Promise<Picture> {
+export async function addPicture(id: string, dataUrl: string, about: Partial<Picture> = {}): Promise<Picture> {
   const image = new Image();
   image.decoding = 'sync';
   const loaded = new Promise<void>((resolve, reject) => {
@@ -28,7 +33,14 @@ export async function addPicture(id: string, dataUrl: string): Promise<Picture> 
   });
   image.src = dataUrl;
   await loaded;
-  const picture: Picture = { id, image, width: image.naturalWidth, height: image.naturalHeight };
+  const picture: Picture = {
+    kind: 'figure',
+    ...about,
+    id,
+    image,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  };
   pictures.set(id, picture);
   return picture;
 }
@@ -49,10 +61,9 @@ export function getPicture(id: string): Picture | undefined {
   return pictures.get(id);
 }
 
-/** Natural size of a picture, for the layout to shape the gap it leaves. */
-export function pictureSize(id: string): { width: number; height: number } | null {
-  const picture = pictures.get(id);
-  return picture ? { width: picture.width, height: picture.height } : null;
+/** Everything known about a picture, for the layout to shape its gap. */
+export function pictureMetrics(id: string): Picture | null {
+  return pictures.get(id) ?? null;
 }
 
 /** The drawable image for a placed diagram, or null if it is not to hand. */

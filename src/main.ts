@@ -776,7 +776,15 @@ async function runImport(file: File): Promise<void> {
     }
     clearPictures('pdf-');
     if (result.images) {
-      await Promise.all(result.images.map((picture) => addPicture(picture.id, picture.dataUrl).catch(() => undefined)));
+      await Promise.all(
+        result.images.map((picture) =>
+          addPicture(picture.id, picture.dataUrl, {
+            kind: picture.kind ?? 'figure',
+            pointWidth: picture.pointWidth,
+            sourceSize: picture.sourceSize,
+          }).catch(() => undefined),
+        ),
+      );
     }
     settings.text = result.text;
     exportTitle = safeFilename(file.name);

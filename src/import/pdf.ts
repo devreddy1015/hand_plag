@@ -12,8 +12,9 @@
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFPageProxy, TextItem } from 'pdfjs-dist/types/src/display/api';
-import { absorbText, findFigureBoxes, type Box } from './figures';
-import { buildLines, reconstruct, DEFAULT_PDF_OPTIONS, type Line, type PageFigure, type PageLines, type PdfOptions } from './reflow';
+import { absorbText, findFigureBoxes, growToInk, roomAround, type Box } from './figures';
+import { findMathBlocks, isMathFont } from './math';
+import { buildLines, reconstruct, DEFAULT_PDF_OPTIONS, type Line, type PageFigure, type PageLines, type PdfOptions, type TextRun } from './reflow';
 import type { ImportedImage, Importer } from './shared';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -45,7 +46,8 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
       const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale: 1 });
       const content = await page.getTextContent();
-      const lines = buildLines(content.items as TextItem[], viewport.height, viewport.width);
+      const runs = opts.diagrams ? await withMathFonts(page, content.items as TextItem[]) : (content.items as TextRun[]);
+      const lines = buildLines(runs, viewport.height, viewport.width);
       const entry: PageLines = { index: i - 1, width: viewport.width, height: viewport.height, lines };
       if (opts.diagrams) {
         try {
@@ -79,11 +81,47 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
 };
 
 /**
+ * Mark the runs set in a mathematics font.
+ *
+ * pdf.js reports only a generic family for each run ("sans-serif"), but the
+ * real name of the embedded font is on the page once its operator list has
+ * been parsed, and that name says plainly whether it is a maths font.
+ */
+async function withMathFonts(page: PDFPageProxy, items: TextItem[]): Promise<TextRun[]> {
+  await page.getOperatorList();
+  const known = new Map<string, boolean>();
+  const mathFont = (id: string): boolean => {
+    let answer = known.get(id);
+    if (answer === undefined) {
+      let name: string | undefined;
+      try {
+        const font = page.commonObjs.get(id) as { name?: string; loadedName?: string } | undefined;
+        name = font?.name ?? font?.loadedName;
+      } catch {
+        name = undefined;
+      }
+      answer = isMathFont(name);
+      known.set(id, answer);
+    }
+    return answer;
+  };
+  return items.map((item) => ({ ...item, math: mathFont(item.fontName) }));
+}
+
+/**
  * Rasterise a page that draws something, find the blocks of drawing that are
- * not text, and cut each one out as a picture.
+ * not text, and cut each one out as a picture. Displayed equations are cut out
+ * the same way: they are drawings of mathematics, not sentences.
  */
 async function extractFigures(page: PDFPageProxy, entry: PageLines, images: ImportedImage[]): Promise<PageFigure[]> {
-  if (!(await drawsAnything(page))) return [];
+  const bodySizeFirst = bodySizeOf(entry.lines);
+  const maths = findMathBlocks(entry.lines, {
+    bodyLeft: leftOf(entry.lines),
+    bodyRight: rightOf(entry.lines),
+    leading: leadingOf(entry.lines, bodySizeFirst),
+    bodySize: bodySizeFirst,
+  });
+  if (maths.boxes.length === 0 && !(await drawsAnything(page))) return [];
 
   const viewport = page.getViewport({ scale: PX_PER_PT });
   const width = Math.max(1, Math.ceil(viewport.width));
@@ -105,10 +143,6 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, images: Impo
 
   const minSize = MIN_FIGURE_MM * (FIGURE_DPI / 25.4);
   const boxesPx = findFigureBoxes(grid, cols, rows, { cell: CELL, pageWidth: width, pageHeight: height, minSize, spread: 3 });
-  if (boxesPx.length === 0) {
-    release(canvas);
-    return [];
-  }
 
   const inPoints = boxesPx.map((b) => ({
     x: b.x / PX_PER_PT,
@@ -117,19 +151,81 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, images: Impo
     height: b.height / PX_PER_PT,
   }));
   const { figures, consumed } = absorbText(inPoints, entry.lines, bodySize, measureOf(entry.lines));
+
+  // An equation drawn inside a figure is part of that figure, not a second one.
+  const equations = maths.boxes
+    .filter((box) => !figures.some((figure) => overlaps(figure.box, box)))
+    // A rule, a root or a big bracket reaches past the glyphs the box was
+    // measured from, so grow it until it stops touching ink — but never far
+    // enough to clip the top off the sentence underneath.
+    .map((box) => growToInk(box, inkReader(ctx, width, height), roomAround(box, entry.lines, maths.consumed)));
+  const all = [
+    ...figures.map((figure) => ({ box: figure.box, caption: figure.caption, kind: 'figure' as const })),
+    ...equations.map((box) => ({ box, caption: '', kind: 'math' as const })),
+  ].sort((a, b) => a.box.y - b.box.y);
+
+  for (const line of maths.consumed) consumed.add(line);
   if (consumed.size > 0) entry.lines = entry.lines.filter((line) => !consumed.has(line));
 
   const out: PageFigure[] = [];
-  figures.forEach((figure, n) => {
+  all.forEach((figure, n) => {
     const id = `pdf-${entry.index + 1}-${n + 1}`;
-    const picture = cutOut(canvas, figure.box, id);
+    const picture = cutOut(canvas, figure.box, id, figure.kind === 'math' ? 1 : 5);
     if (!picture) return;
+    picture.kind = figure.kind;
+    picture.pointWidth = figure.box.width;
+    picture.sourceSize = bodySize;
     images.push(picture);
     out.push({ id, top: figure.box.y, bottom: figure.box.y + figure.box.height, caption: figure.caption });
   });
 
   release(canvas);
   return out;
+}
+
+/** Asks whether anything is drawn in a strip of the rendered page. */
+function inkReader(ctx: CanvasRenderingContext2D, width: number, height: number) {
+  return (x: number, y: number, w: number, h: number): boolean => {
+    const sx = Math.max(0, Math.round(x * PX_PER_PT));
+    const sy = Math.max(0, Math.round(y * PX_PER_PT));
+    const sw = Math.min(width - sx, Math.max(1, Math.round(w * PX_PER_PT)));
+    const sh = Math.min(height - sy, Math.max(1, Math.round(h * PX_PER_PT)));
+    if (sw <= 0 || sh <= 0 || sx >= width || sy >= height) return false;
+    const data = ctx.getImageData(sx, sy, sw, sh).data;
+    for (let i = 0; i < data.length; i += 4) {
+      if (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] < INK_LEVEL) return true;
+    }
+    return false;
+  };
+}
+
+function overlaps(a: Box, b: Box): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/** The left margin of the running text: the edge most lines start from. */
+function leftOf(lines: Line[]): number {
+  if (lines.length === 0) return 0;
+  const lefts = lines.map((l) => l.x0).sort((a, b) => a - b);
+  return lefts[Math.floor(lefts.length * 0.12)];
+}
+
+function rightOf(lines: Line[]): number {
+  if (lines.length === 0) return Infinity;
+  const rights = lines.map((l) => l.x1).sort((a, b) => a - b);
+  return rights[Math.floor(rights.length * 0.9)];
+}
+
+/** The usual distance between two lines of running text. */
+function leadingOf(lines: Line[], bodySize: number): number {
+  const gaps: number[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const gap = lines[i].y - lines[i - 1].y;
+    if (gap > 0.5 && gap < bodySize * 4) gaps.push(gap);
+  }
+  if (gaps.length === 0) return bodySize * 1.2;
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
 }
 
 function release(canvas: HTMLCanvasElement): void {
@@ -206,8 +302,7 @@ function bodySizeOf(lines: Line[]): number {
 }
 
 /** Copy one figure out of the rendered page, at a sensible size. */
-function cutOut(page: HTMLCanvasElement, box: Box, id: string): ImportedImage | null {
-  const pad = 5;
+function cutOut(page: HTMLCanvasElement, box: Box, id: string, pad = 5): ImportedImage | null {
   const sx = Math.max(0, Math.floor(box.x * PX_PER_PT) - pad);
   const sy = Math.max(0, Math.floor(box.y * PX_PER_PT) - pad);
   const sw = Math.min(page.width - sx, Math.ceil(box.width * PX_PER_PT) + pad * 2);

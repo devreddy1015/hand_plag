@@ -7,6 +7,12 @@ export interface ImportedImage {
   dataUrl: string;
   width: number;
   height: number;
+  /** An equation is copied out at the size of the writing, not as a figure. */
+  kind?: 'figure' | 'math';
+  /** Width on the source page, in points. */
+  pointWidth?: number;
+  /** Size of the running text it was taken from, in points. */
+  sourceSize?: number;
 }
 
 export interface ImportResult {

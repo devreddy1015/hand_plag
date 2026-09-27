@@ -149,7 +149,7 @@ export interface LayoutOptions {
    * Natural size of a diagram, in whatever units, so the layout can work out
    * its shape. Returning null leaves room for a figure nobody has drawn yet.
    */
-  imageSize?: (src: string) => { width: number; height: number } | null;
+  imageSize?: (src: string) => { width: number; height: number; widthUnits?: number } | null;
 }
 
 /**
@@ -568,7 +568,10 @@ export function layoutDocument(
     const natural = imageSize(block.src);
     const aspect = natural && natural.width > 0 && natural.height > 0 ? natural.height / natural.width : 0.7;
 
-    let width = column * clamp(s.diagramScale, 0.15, 1);
+    // An equation asks to be drawn at a particular size — the size of the
+    // writing around it — because that is what copying one out means. A
+    // figure just takes its share of the column.
+    let width = natural?.widthUnits ? Math.min(column, natural.widthUnits) : column * clamp(s.diagramScale, 0.15, 1);
     let height = width * aspect;
     // Never taller than most of a column, or it could never be placed at all.
     const maxHeight = Math.max(1, Math.floor(areaNow.lines.length * 0.85)) * spacing - spacing * 0.4;

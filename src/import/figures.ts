@@ -192,6 +192,57 @@ function union(a: Box, b: Box): Box {
   return { x, y, width: Math.max(right(a), right(b)) - x, height: Math.max(bottom(a), bottom(b)) - y };
 }
 
+/** The space a box is allowed to occupy, in page coordinates. */
+export interface Room {
+  /** The box may not start above this, nor end below `bottom`. */
+  top: number;
+  bottom: number;
+  /** How far it may spread left and right. */
+  sideways: number;
+}
+
+/**
+ * The band between the lines above and below a box. A box measured from glyph
+ * positions can already overlap its neighbours, so this is a boundary to be
+ * held to, not merely a budget to grow within.
+ */
+export function roomAround(box: Box, lines: Line[], part: Set<Line>, most = 9): Room {
+  const middle = box.y + box.height / 2;
+  let top = box.y - most;
+  let floor = bottom(box) + most;
+  for (const line of lines) {
+    if (part.has(line)) continue;
+    const head = line.y - line.size * 1.05;
+    const foot = line.y + line.size * 0.35;
+    if (foot <= middle) top = Math.max(top, foot + 0.5);
+    else if (head >= middle) floor = Math.min(floor, head - 0.5);
+  }
+  return { top, bottom: Math.max(top + 1, floor), sideways: 4 };
+}
+
+/**
+ * Fit a box to the ink inside the room it has.
+ *
+ * A box measured from where the glyphs sit is the wrong size for mathematics:
+ * a fraction rule, a radical or a tall bracket reaches past it, while the
+ * first attempt may also overlap the line above. So clamp it to the room, then
+ * walk each edge outwards while there is still something drawn. `dark` answers
+ * whether anything is drawn in a strip of the page.
+ */
+export function growToInk(box: Box, dark: (x: number, y: number, w: number, h: number) => boolean, room: Room, step = 0.5): Box {
+  let x = box.x;
+  let x1 = right(box);
+  let y = Math.max(box.y, room.top);
+  let y1 = Math.min(bottom(box), room.bottom);
+  if (y1 <= y) y1 = y + step;
+
+  while (y - step >= room.top && dark(x, y - step, x1 - x, step)) y -= step;
+  while (y1 + step <= room.bottom && dark(x, y1, x1 - x, step)) y1 += step;
+  for (let n = 0; n < room.sideways / step && dark(x - step, y, step, y1 - y); n++) x -= step;
+  for (let n = 0; n < room.sideways / step && dark(x1, y, step, y1 - y); n++) x1 += step;
+  return { x, y, width: x1 - x, height: y1 - y };
+}
+
 /** What a caption starts with, in the documents people actually hand in. */
 const CAPTION = /^\s*(fig(?:ure|\.)?|table|chart|diagram|graph|plate|scheme|exhibit|image|photo)\b[\s.:—–-]*\d*/i;
 
