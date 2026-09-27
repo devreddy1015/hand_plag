@@ -1,5 +1,7 @@
 import {
+  drawPaper,
   fontSizeFor,
+  get2d,
   layoutDocument,
   pageGeometry,
   renderPage,
@@ -29,10 +31,11 @@ export async function prepare(settings: Settings): Promise<Prepared> {
   const families = fontFamiliesFor(font, settings.text);
   await loadFonts(families, settings.text);
   const fontStack = cssFontStack(families);
-  const geometry = pageGeometry(settings);
+  const geometryOf = (pageIndex: number) => pageGeometry(settings, pageIndex);
+  const geometry = geometryOf(0);
   const metrics = fontMetrics(font.family);
   const fontPx = fontSizeFor(geometry.spacing, settings.letterSize, metrics.xHeight, metrics.capHeight);
-  const doc = layoutDocument(settings.text, geometry, fontPx, settings, createMeasurer(fontStack, fontPx), {
+  const doc = layoutDocument(settings.text, geometryOf, fontPx, settings, createMeasurer(fontStack, fontPx), {
     connected: font.connected,
     unitScale: fallbackScaler(font, families),
   });
@@ -45,4 +48,22 @@ export function drawPage(target: AnyCanvas, prepared: Prepared, pageIndex: numbe
     fontStack: prepared.fontStack,
     createCanvas,
   });
+}
+
+/**
+ * Paint an empty sheet: used for the paper-template thumbnails, so the gallery
+ * shows the real thing rather than a drawing of it.
+ */
+export function drawPaperOnly(target: AnyCanvas, settings: Settings, widthPx: number): void {
+  const geom = pageGeometry(settings, 0);
+  const scale = widthPx / geom.width;
+  const w = Math.max(1, Math.round(geom.width * scale));
+  const h = Math.max(1, Math.round(geom.height * scale));
+  if (target.width !== w) target.width = w;
+  if (target.height !== h) target.height = h;
+  const ctx = get2d(target);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  // Grain is invisible at thumbnail size and costs a tile render per template.
+  drawPaper(ctx, geom, { ...settings, texture: false }, scale, 0, createCanvas);
 }

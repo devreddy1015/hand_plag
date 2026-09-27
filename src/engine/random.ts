@@ -76,3 +76,29 @@ export function createNoise1D(seed: number): (x: number) => number {
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
+
+export function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Smooth 0..1 ramp. */
+export function smoothstep(t: number): number {
+  const x = clamp(t, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * A slow, smooth "writer state" curve in [-1, 1]: how the hand drifts over
+ * many lines (size, slant, spacing, ink flow). Two long wavelengths so the
+ * drift never looks periodic.
+ */
+export function createDrift(seed: number, wavelength: number): (t: number) => number {
+  const a = createNoise1D(hashInts(seed, 0x0d21f7));
+  const b = createNoise1D(hashInts(seed, 0x51ce9d));
+  return (t: number) => clamp(a(t / wavelength) * 0.65 + b(t / (wavelength * 2.7) + 9.3) * 0.45, -1, 1);
+}
+
+/** True with probability p, consuming one sample. */
+export function chance(rng: Rng, p: number): boolean {
+  return rng() < p;
+}

@@ -93,6 +93,8 @@ export interface Token {
   spacesBefore: number;
   /** Drawn as one shaped unit. */
   shaped: boolean;
+  /** Index in the paragraph of the first character of this token. */
+  offset: number;
 }
 
 /**
@@ -102,44 +104,105 @@ export interface Token {
 export function tokenize(paragraph: string, forceShaped = false): Token[] {
   const tokens: Token[] = [];
   let pendingSpaces = 0;
+  let pos = 0;
   for (const piece of paragraph.split(/(\s+)/)) {
+    const at = pos;
+    pos += piece.length;
     if (piece === '') continue;
     if (/^\s+$/.test(piece)) {
       for (const ch of piece) pendingSpaces += ch === '\t' ? 4 : 1;
       continue;
     }
     if (!forceShaped && PRINTABLE_ASCII.test(piece)) {
-      tokens.push({ units: piece.split(''), spacesBefore: pendingSpaces, shaped: false });
+      tokens.push({ units: piece.split(''), spacesBefore: pendingSpaces, shaped: false, offset: at });
       pendingSpaces = 0;
       continue;
     }
     const shaped = forceShaped || needsShaping(piece);
     if (shaped) {
-      tokens.push({ units: [piece], spacesBefore: pendingSpaces, shaped: true });
+      tokens.push({ units: [piece], spacesBefore: pendingSpaces, shaped: true, offset: at });
       pendingSpaces = 0;
       continue;
     }
     // Group clusters: consecutive non-CJK clusters form one word; each CJK
     // cluster stands alone so the line can break around it.
     let run: string[] = [];
+    let runAt = at;
+    let cursor = at;
     let first = true;
     const flush = () => {
       if (run.length === 0) return;
-      tokens.push({ units: run, spacesBefore: first ? pendingSpaces : 0, shaped: false });
+      tokens.push({ units: run, spacesBefore: first ? pendingSpaces : 0, shaped: false, offset: runAt });
       first = false;
       run = [];
     };
     for (const cluster of graphemes(piece)) {
       if (BREAK_ANYWHERE.test(cluster)) {
         flush();
-        tokens.push({ units: [cluster], spacesBefore: first ? pendingSpaces : 0, shaped: false });
+        tokens.push({ units: [cluster], spacesBefore: first ? pendingSpaces : 0, shaped: false, offset: cursor });
         first = false;
       } else {
+        if (run.length === 0) runAt = cursor;
         run.push(cluster);
       }
+      cursor += cluster.length;
     }
     flush();
     pendingSpaces = 0;
   }
   return tokens;
+}
+
+const VOWEL = /[aeiouyàáâäãåèéêëìíîïòóôöõùúûüāēīōū]/i;
+const LETTER = /\p{L}/u;
+
+/**
+ * Where a writer would break a long word across two lines, preferring the
+ * candidate closest to (but not after) `target`. Returns 0 when the word
+ * should not be broken.
+ *
+ * The rules are the ones people actually use by ear: keep at least two
+ * letters on each line, break between two consonants or after a vowel, and
+ * never split a digit run or a hyphenated compound in the wrong place.
+ */
+export function hyphenPoint(units: string[], target: number): number {
+  const n = units.length;
+  if (n < 6 || target < 3) return 0;
+  const limit = Math.min(target, n - 3);
+  let best = 0;
+  let bestScore = -1;
+  for (let i = 3; i <= limit; i++) {
+    const prev = units[i - 1];
+    const next = units[i];
+    if (!LETTER.test(prev) || !LETTER.test(next)) continue;
+    if (prev === next) continue; // don't split a doubled letter pair badly
+    const prevVowel = VOWEL.test(prev);
+    const nextVowel = VOWEL.test(next);
+    let score = 1;
+    if (!prevVowel && !nextVowel) score = 4; // between two consonants: cleanest
+    else if (prevVowel && !nextVowel) score = 3; // after a vowel
+    else if (!prevVowel && nextVowel) score = 2;
+    // Prefer breaks close to the end of the available room.
+    score += (i / limit) * 1.5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** Sentence-ending punctuation gets a wider gap after it, as in real writing. */
+export function gapAfterFactor(word: string): number {
+  const last = word.slice(-1);
+  if (last === '.' || last === '!' || last === '?' || last === '…') return 1.35;
+  if (last === ',' || last === ';' || last === ':') return 1.15;
+  return 1;
+}
+
+/** A leading opening bracket or quote is written tight against its word. */
+export function gapBeforeFactor(word: string): number {
+  const first = word.slice(0, 1);
+  if (first === '(' || first === '[' || first === '“' || first === '"') return 1.1;
+  return 1;
 }

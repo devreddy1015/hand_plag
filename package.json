@@ -13,22 +13,29 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/architects-daughter": "^5.3.0",
     "@fontsource/aref-ruqaa": "^5.3.0",
     "@fontsource/caveat": "^5.3.0",
     "@fontsource/cedarville-cursive": "^5.3.0",
+    "@fontsource/covered-by-your-grace": "^5.3.0",
+    "@fontsource/dawning-of-a-new-day": "^5.3.0",
     "@fontsource/gochi-hand": "^5.3.0",
     "@fontsource/homemade-apple": "^5.3.0",
     "@fontsource/indie-flower": "^5.3.0",
+    "@fontsource/just-another-hand": "^5.3.0",
     "@fontsource/kalam": "^5.3.0",
     "@fontsource/ma-shan-zheng": "^5.3.1",
     "@fontsource/nanum-pen-script": "^5.3.0",
     "@fontsource/neucha": "^5.3.0",
     "@fontsource/patrick-hand": "^5.3.0",
     "@fontsource/reenie-beanie": "^5.3.0",
+    "@fontsource/rock-salt": "^5.3.0",
     "@fontsource/shadows-into-light": "^5.3.0",
     "@fontsource/yomogi": "^5.3.0",
+    "@fontsource/zeyada": "^5.3.0",
     "fflate": "^0.8.3",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

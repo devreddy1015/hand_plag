@@ -3,28 +3,71 @@
  * or Apache 2.0, both of which allow commercial use and server-side
  * rendering. Fonts are self-hosted from npm (@fontsource), split by
  * unicode-range, so only the subsets a document uses are downloaded.
+ *
+ * The @font-face rules are imported per font, on demand: twenty hands with
+ * full CJK coverage come to a third of a megabyte of CSS, which nobody should
+ * download to write one page of English.
  */
-import '@fontsource/caveat/400.css';
-import '@fontsource/kalam/400.css';
-import '@fontsource/indie-flower/400.css';
-import '@fontsource/shadows-into-light/400.css';
-import '@fontsource/patrick-hand/400.css';
-import '@fontsource/gochi-hand/400.css';
-import '@fontsource/reenie-beanie/400.css';
-import '@fontsource/homemade-apple/400.css';
-import '@fontsource/cedarville-cursive/400.css';
-import '@fontsource/neucha/400.css';
-import '@fontsource/nanum-pen-script/400.css';
-import '@fontsource/yomogi/400.css';
-import '@fontsource/ma-shan-zheng/400.css';
-import '@fontsource/aref-ruqaa/400.css';
-
 import { detectScripts, scriptOf, type Measurer, type ScriptTag } from './engine';
+
+
+/** The @font-face rules for each family, fetched the first time it is used. */
+const FONT_CSS: Record<string, () => Promise<unknown>> = {
+  'Caveat': () => import('@fontsource/caveat/400.css'),
+  'Kalam': () => import('@fontsource/kalam/400.css'),
+  'Architects Daughter': () => import('@fontsource/architects-daughter/400.css'),
+  'Covered By Your Grace': () => import('@fontsource/covered-by-your-grace/400.css'),
+  'Indie Flower': () => import('@fontsource/indie-flower/400.css'),
+  'Shadows Into Light': () => import('@fontsource/shadows-into-light/400.css'),
+  'Patrick Hand': () => import('@fontsource/patrick-hand/400.css'),
+  'Just Another Hand': () => import('@fontsource/just-another-hand/400.css'),
+  'Gochi Hand': () => import('@fontsource/gochi-hand/400.css'),
+  'Rock Salt': () => import('@fontsource/rock-salt/400.css'),
+  'Reenie Beanie': () => import('@fontsource/reenie-beanie/400.css'),
+  'Homemade Apple': () => import('@fontsource/homemade-apple/400.css'),
+  'Cedarville Cursive': () => import('@fontsource/cedarville-cursive/400.css'),
+  'Zeyada': () => import('@fontsource/zeyada/400.css'),
+  'Dawning of a New Day': () => import('@fontsource/dawning-of-a-new-day/400.css'),
+  'Neucha': () => import('@fontsource/neucha/400.css'),
+  'Nanum Pen Script': () => import('@fontsource/nanum-pen-script/400.css'),
+  'Yomogi': () => import('@fontsource/yomogi/400.css'),
+  'Ma Shan Zheng': () => import('@fontsource/ma-shan-zheng/400.css'),
+  'Aref Ruqaa': () => import('@fontsource/aref-ruqaa/400.css'),
+};
+
+const cssLoaded = new Map<string, Promise<unknown>>();
+
+/** Fetch the @font-face rules for these families, once each. */
+export function loadFontCss(families: string[]): Promise<unknown> {
+  return Promise.all(
+    families.map((family) => {
+      const loader = FONT_CSS[family];
+      if (!loader) return Promise.resolve();
+      let pending = cssLoaded.get(family);
+      if (!pending) {
+        pending = loader().catch(() => undefined);
+        cssLoaded.set(family, pending);
+      }
+      return pending;
+    }),
+  );
+}
+
+/** Every family that has bundled @font-face rules, for the font gallery. */
+export function styledFamilies(): string[] {
+  return Object.keys(FONT_CSS);
+}
+
+export type FontGroup = 'Print' | 'Cursive' | 'Bold hand' | 'World scripts' | 'Your fonts';
 
 export interface FontEntry {
   id: string;
   family: string;
+  /** Short name, as the writer would recognise it. */
   label: string;
+  /** What the hand looks like. */
+  note: string;
+  group: FontGroup;
   /** Scripts the font covers well. */
   scripts: ScriptTag[];
   license: string;
@@ -34,19 +77,108 @@ export interface FontEntry {
 }
 
 export const FONTS: FontEntry[] = [
-  { id: 'caveat', family: 'Caveat', label: 'Caveat: casual', scripts: ['latin', 'cyrillic'], license: 'OFL-1.1' },
-  { id: 'kalam', family: 'Kalam', label: 'Kalam: neat print', scripts: ['latin', 'devanagari'], license: 'OFL-1.1' },
-  { id: 'patrick-hand', family: 'Patrick Hand', label: 'Patrick Hand: tidy print', scripts: ['latin'], license: 'OFL-1.1' },
-  { id: 'indie-flower', family: 'Indie Flower', label: 'Indie Flower: rounded', scripts: ['latin'], license: 'OFL-1.1' },
-  { id: 'shadows-into-light', family: 'Shadows Into Light', label: 'Shadows Into Light: narrow', scripts: ['latin'], license: 'OFL-1.1' },
-  { id: 'gochi-hand', family: 'Gochi Hand', label: 'Gochi Hand: marker', scripts: ['latin'], license: 'OFL-1.1' },
-  { id: 'reenie-beanie', family: 'Reenie Beanie', label: 'Reenie Beanie: quick scrawl', scripts: ['latin'], license: 'OFL-1.1' },
-  { id: 'homemade-apple', family: 'Homemade Apple', label: 'Homemade Apple: loopy cursive', scripts: ['latin'], license: 'Apache-2.0', connected: true },
-  { id: 'cedarville-cursive', family: 'Cedarville Cursive', label: 'Cedarville: school cursive', scripts: ['latin'], license: 'OFL-1.1', connected: true },
-  { id: 'neucha', family: 'Neucha', label: 'Neucha: Cyrillic print', scripts: ['latin', 'cyrillic'], license: 'OFL-1.1' },
-  { id: 'nanum-pen-script', family: 'Nanum Pen Script', label: 'Nanum Pen Script: Korean', scripts: ['latin', 'hangul'], license: 'OFL-1.1' },
-  { id: 'yomogi', family: 'Yomogi', label: 'Yomogi: Japanese', scripts: ['latin', 'cyrillic', 'kana', 'han'], license: 'OFL-1.1' },
-  { id: 'ma-shan-zheng', family: 'Ma Shan Zheng', label: 'Ma Shan Zheng: Chinese brush', scripts: ['latin', 'han'], license: 'OFL-1.1' },
+  { id: 'caveat', family: 'Caveat', label: 'Caveat', note: 'Quick casual notes', group: 'Print', scripts: ['latin', 'cyrillic'], license: 'OFL-1.1' },
+  { id: 'kalam', family: 'Kalam', label: 'Kalam', note: 'Neat, even print', group: 'Print', scripts: ['latin', 'devanagari'], license: 'OFL-1.1' },
+  {
+    id: 'architects-daughter',
+    family: 'Architects Daughter',
+    label: 'Architect',
+    note: 'Upright drafting hand',
+    group: 'Print',
+    scripts: ['latin'],
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'covered-by-your-grace',
+    family: 'Covered By Your Grace',
+    label: 'Covered',
+    note: 'Fast school print',
+    group: 'Print',
+    scripts: ['latin'],
+    license: 'OFL-1.1',
+  },
+  { id: 'patrick-hand', family: 'Patrick Hand', label: 'Patrick', note: 'Tidy, rounded print', group: 'Print', scripts: ['latin'], license: 'OFL-1.1' },
+  { id: 'indie-flower', family: 'Indie Flower', label: 'Indie', note: 'Bubbly and round', group: 'Print', scripts: ['latin'], license: 'OFL-1.1' },
+  {
+    id: 'shadows-into-light',
+    family: 'Shadows Into Light',
+    label: 'Shadows',
+    note: 'Narrow, light touch',
+    group: 'Print',
+    scripts: ['latin'],
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'just-another-hand',
+    family: 'Just Another Hand',
+    label: 'Tall hand',
+    note: 'Tall, narrow, hurried',
+    group: 'Print',
+    scripts: ['latin'],
+    license: 'Apache-2.0',
+  },
+  { id: 'reenie-beanie', family: 'Reenie Beanie', label: 'Reenie', note: 'Loose ballpoint scrawl', group: 'Print', scripts: ['latin'], license: 'OFL-1.1' },
+  {
+    id: 'homemade-apple',
+    family: 'Homemade Apple',
+    label: 'Homemade',
+    note: 'Looping ink cursive',
+    group: 'Cursive',
+    scripts: ['latin'],
+    license: 'Apache-2.0',
+    connected: true,
+  },
+  {
+    id: 'cedarville-cursive',
+    family: 'Cedarville Cursive',
+    label: 'Cedarville',
+    note: 'School cursive',
+    group: 'Cursive',
+    scripts: ['latin'],
+    license: 'OFL-1.1',
+    connected: true,
+  },
+  { id: 'zeyada', family: 'Zeyada', label: 'Zeyada', note: 'Flowing, inky cursive', group: 'Cursive', scripts: ['latin'], license: 'OFL-1.1', connected: true },
+  {
+    id: 'dawning-of-a-new-day',
+    family: 'Dawning of a New Day',
+    label: 'Dawning',
+    note: 'Fine fountain-pen cursive',
+    group: 'Cursive',
+    scripts: ['latin'],
+    license: 'OFL-1.1',
+    connected: true,
+  },
+  { id: 'gochi-hand', family: 'Gochi Hand', label: 'Gochi', note: 'Thick marker', group: 'Bold hand', scripts: ['latin'], license: 'OFL-1.1' },
+  { id: 'rock-salt', family: 'Rock Salt', label: 'Rock Salt', note: 'Heavy, pressed hard', group: 'Bold hand', scripts: ['latin'], license: 'Apache-2.0' },
+  { id: 'neucha', family: 'Neucha', label: 'Neucha', note: 'Cyrillic and Latin print', group: 'World scripts', scripts: ['latin', 'cyrillic'], license: 'OFL-1.1' },
+  {
+    id: 'nanum-pen-script',
+    family: 'Nanum Pen Script',
+    label: 'Nanum Pen',
+    note: 'Korean pen hand',
+    group: 'World scripts',
+    scripts: ['latin', 'hangul'],
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'yomogi',
+    family: 'Yomogi',
+    label: 'Yomogi',
+    note: 'Japanese pen hand',
+    group: 'World scripts',
+    scripts: ['latin', 'cyrillic', 'kana', 'han'],
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'ma-shan-zheng',
+    family: 'Ma Shan Zheng',
+    label: 'Ma Shan Zheng',
+    note: 'Chinese brush hand',
+    group: 'World scripts',
+    scripts: ['latin', 'han'],
+    license: 'OFL-1.1',
+  },
 ];
 
 /** Handwriting fonts used for characters the chosen font lacks. */
@@ -79,6 +211,8 @@ export function fontFamiliesFor(font: FontEntry, text: string): string[] {
     const fallback = script === 'han' && scripts.has('kana') ? 'Yomogi' : FALLBACKS[script];
     if (fallback && !families.includes(fallback)) families.push(fallback);
   }
+  // A custom font may not cover the basic Latin set; keep a hand behind it.
+  if (font.custom) families.push('Caveat');
   return families;
 }
 
@@ -88,6 +222,7 @@ export function cssFontStack(families: string[]): string {
 
 /** Make sure every font subset the text needs is downloaded before drawing. */
 export async function loadFonts(families: string[], text: string): Promise<void> {
+  await loadFontCss(families);
   // x and H are always needed: they are measured to size each font.
   const chars = new Set<string>(['x', 'H']);
   for (const ch of text) {
@@ -95,9 +230,7 @@ export async function loadFonts(families: string[], text: string): Promise<void>
     if (chars.size > 6000) break;
   }
   const sample = [...chars].join('') || 'abc';
-  await Promise.all(
-    families.map((family) => document.fonts.load(`32px "${family}"`, sample).catch(() => [])),
-  );
+  await Promise.all(families.map((family) => document.fonts.load(`32px "${family}"`, sample).catch(() => [])));
 }
 
 let measureCanvas: HTMLCanvasElement | null = null;
@@ -181,7 +314,9 @@ export async function addCustomFont(file: File): Promise<FontEntry> {
   const entry: FontEntry = {
     id: `custom:${family}`,
     family,
-    label: `${name} (your font)`,
+    label: name,
+    note: 'Your own font',
+    group: 'Your fonts',
     scripts: ['latin'],
     license: 'Supplied by you',
     custom: true,
