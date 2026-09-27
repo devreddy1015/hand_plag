@@ -9,10 +9,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # pdf.js asks for >= 22.13 and vitest for ^22.12 || ^24 || >= 26;
+          # 24 satisfies everything and matches the runner's own Node.
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test

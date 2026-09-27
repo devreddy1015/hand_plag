@@ -73,7 +73,10 @@ npm run preview    # serve the built site
 from any sub-path. No server, no API keys, no backend.
 
 - **GitHub Pages**: push to `main`; the included workflow (`.github/workflows/pages.yml`)
-  builds and publishes it. Enable Pages → Source: GitHub Actions, once.
+  builds and publishes it to https://devreddy1015.github.io/hand_plag/. This needs Pages
+  set to **Source: GitHub Actions** (Settings → Pages). In the older "Deploy from a
+  branch" mode, the `github-pages` environment only allows that one branch, and the
+  deploy step is refused with "Branch main is not allowed to deploy to github-pages".
 - **Netlify / Cloudflare Pages / Vercel**: build command `npm run build`, publish
   directory `dist`.
 - **Anything else**: copy `dist/` onto any static host or CDN.
