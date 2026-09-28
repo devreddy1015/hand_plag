@@ -29,6 +29,19 @@ import type { Line } from './reflow';
  */
 const MATH_FONT = /CM(MI|SY|EX)|MSAM|MSBM|EUFM|EURM|RSFS|STIX|XITS|Asana|Latin\s*Modern\s*Math|LMMath|TeX.?Math|MathJax|Cambria\s*Math|Math.*Italic/i;
 
+/**
+ * Fonts that draw rather than write: LaTeX's picture-mode line and circle
+ * fonts (every arrowhead in a LaTeX diagram is a character in one of them),
+ * the big delimiters of CMEX, and the AMS symbol fonts' arrows.
+ */
+const DRAWING_FONT = /^(LINE|LINEW|LCIRCLE|LCIRCLEW)\d*$|CMEX|Wingdings|ZapfDingbats|Webdings/i;
+
+/** Is this font used to draw pieces of pictures rather than to set words? */
+export function isDrawingFont(name: string | undefined | null): boolean {
+  if (!name) return false;
+  return DRAWING_FONT.test(name.replace(/^[A-Z]{6}\+/, ''));
+}
+
 /** Is this font used only for setting mathematics? */
 export function isMathFont(name: string | undefined | null): boolean {
   if (!name) return false;

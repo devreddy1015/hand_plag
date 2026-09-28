@@ -265,3 +265,23 @@ describe('columns', () => {
     expect(out.indexOf('Title')).toBeLessThan(out.indexOf('left 0'));
   });
 });
+
+describe('superscripts and subscripts in a PDF', () => {
+  it('keeps a raised, smaller run as a superscript and a dropped one as a subscript', () => {
+    const runs: TextRun[] = [
+      { str: 'Energy is E = mc', transform: [BODY, 0, 0, BODY, 63, PAGE_H - 100], width: 90, height: BODY },
+      { str: '2', transform: [8, 0, 0, 8, 153, PAGE_H - 96], width: 4, height: 8 },
+      { str: ' and water is H', transform: [BODY, 0, 0, BODY, 158, PAGE_H - 100], width: 80, height: BODY },
+      { str: '2', transform: [8, 0, 0, 8, 238, PAGE_H - 102.5], width: 4, height: 8 },
+      { str: 'O.', transform: [BODY, 0, 0, BODY, 242, PAGE_H - 100], width: 12, height: BODY },
+    ];
+    const [line] = buildLines(runs, PAGE_H, PAGE_W);
+    expect(line.text).toBe('Energy is E = mc^{2} and water is H_{2}O.');
+    expect(line.y).toBeCloseTo(100, 5);
+  });
+
+  it('drops a bare page number even from a short document', () => {
+    const pages = [page(0, [{ text: 'Only one page of writing here.', y: 100 }, { text: '1', y: 800, x: 290, width: 6 }])];
+    expect(text(pages)).toBe('Only one page of writing here.');
+  });
+});

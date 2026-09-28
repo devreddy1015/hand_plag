@@ -34,6 +34,7 @@
     "@fontsource/yomogi": "^5.3.0",
     "@fontsource/zeyada": "^5.3.0",
     "fflate": "^0.8.3",
+    "opentype.js": "^2.0.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289"
   },

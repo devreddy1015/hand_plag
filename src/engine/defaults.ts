@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
     ink: 1,
     drift: 1,
     word: 1,
+    shape: 1,
   },
   seed: 20260923,
 };

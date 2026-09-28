@@ -81,6 +81,8 @@ export interface JitterWeights {
   drift: number;
   /** Words sitting off the line as a whole, rather than letter by letter. */
   word: number;
+  /** Every copy of a letter bent into a slightly different shape. */
+  shape: number;
 }
 
 export interface Settings {
@@ -168,6 +170,12 @@ export interface PlacedGlyph {
   rtl?: true;
   /** Ink pooled where the pen was set down. */
   blot?: number;
+  /** Which of the writer's habitual forms of this letter. */
+  variant?: number;
+  /** Seed for the bend of this one copy of the letter. */
+  seed?: number;
+  /** How far the letter's shape is bent away from the font's (0 = not at all). */
+  warp?: number;
 }
 
 /** A pen stroke that is not a letter: underline, strike-out, bullet, caret, divider. */
@@ -181,6 +189,43 @@ export interface InkStroke {
   shade: number;
   /** Round off the ends (a pen lift leaves a blunt end when false). */
   taper?: boolean;
+  /** Ink the inside of the closed outline too (a filled arrowhead, a dot on a graph). */
+  fill?: boolean;
+}
+
+/**
+ * A diagram as a writer copies it: the lines to draw, the areas to shade,
+ * and the words to write. Everything is measured in widths of the figure,
+ * so x runs 0..1 and y runs 0..1/aspect, and nothing depends on the size of
+ * the picture it was traced from.
+ */
+export interface Sketch {
+  /** Width over height. */
+  aspect: number;
+  /** Pen paths, as x, y pairs. */
+  paths: { pts: number[]; weight: number; closed?: boolean }[];
+  /**
+   * Filled areas, as outlines. Small ones are inked in; large ones are shaded,
+   * closer for darker fills, and each colour group in its own way.
+   */
+  fills: { pts: number[]; area: number; tone?: number; group?: number }[];
+  /** Words in the figure, written in the hand where they stood. */
+  labels: SketchLabel[];
+  /** Typical line width in the source, in figure widths, so heavy lines stay heavier. */
+  lineWidth: number;
+  /** Drawn by hand on the pad already: its lines are the writer's own and are not shaken again. */
+  handmade?: boolean;
+}
+
+export interface SketchLabel {
+  text: string;
+  /** Left end and baseline of the printed words. */
+  x: number;
+  y: number;
+  /** Width of the printed words. */
+  w: number;
+  /** Size of the printed type. */
+  size: number;
 }
 
 /** A diagram placed on the page: copied out in pen, or stuck on. */
@@ -194,6 +239,8 @@ export interface PlacedImage {
   height: number;
   /** Radians. Nothing is ever drawn or stuck on perfectly square. */
   rotation: number;
+  /** A photograph is always stuck on: nobody copies one out in pen. */
+  photo?: boolean;
 }
 
 export interface PageLayout {

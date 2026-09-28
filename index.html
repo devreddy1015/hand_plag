@@ -30,13 +30,19 @@
       </div>
       <p class="tagline">Text, PDF or Word in. Handwriting out. Nothing leaves this browser.</p>
       <div class="topbar-actions">
-        <label class="button primary small" id="import-label">
+        <label class="button small" id="import-label">
           <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
             <path d="M10 14V3m0 0L6 7m4-4 4 4M3 13v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
           </svg>
           Import PDF, Word or text
           <input type="file" id="import-file" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
         </label>
+        <button type="button" class="button primary small" id="quick-pdf" title="Download every page as a PDF">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <path d="M10 3v11m0 0-4-4m4 4 4-4M3 15v1a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1" />
+          </svg>
+          Download PDF
+        </button>
         <button type="button" class="ghost small" id="toggle-advanced" aria-pressed="false">All settings</button>
         <button type="button" class="ghost small" id="copy-style" title="Copy a link that carries these settings">Copy style link</button>
         <button type="button" class="ghost small" id="reset-all" title="Back to the default settings">Reset</button>
@@ -70,9 +76,10 @@
                 Join wrapped lines
               </button>
               <label class="button ghost small">
-                Add a diagram
+                Add a picture
                 <input type="file" id="diagram-upload" accept="image/*" hidden />
               </label>
+              <button type="button" class="ghost small" id="draw-diagram">Draw a diagram</button>
               <button type="button" class="ghost small" id="sample-text">Sample</button>
               <button type="button" class="ghost small" id="clear-text">Clear</button>
             </div>
@@ -238,6 +245,18 @@
 
         <!-- ------------------------------------------------------------ hand -->
         <section class="tabpanel" id="panel-hand" role="tabpanel" aria-labelledby="tab-hand" hidden>
+          <section class="card own-hand">
+            <div class="card-head">
+              <h2>Your own handwriting</h2>
+            </div>
+            <p class="hint">
+              Write each letter three times with a finger, a stylus or the mouse, and the page is written in your hand. It can't
+              be matched to any font, because it isn't one. It stays in this browser.
+            </p>
+            <div class="own-hands" id="own-hands"></div>
+            <button type="button" class="primary" id="hand-new">Write your alphabet</button>
+          </section>
+
           <section class="card">
             <div class="card-head">
               <h2>Handwriting</h2>
@@ -296,9 +315,13 @@
               <label class="check"><input type="checkbox" data-key="diagrams" /> <span>Draw the diagrams at all</span></label>
               <label class="check"><input type="checkbox" data-key="diagramFrame" /> <span>Rule a box around each one</span></label>
             </div>
+            <p class="hint">
+              Charts, flowcharts and equations from a PDF are traced and drawn again in your pen, with their labels written in
+              your hand. Photographs are stuck on as prints. Drag in a picture or draw your own from the Text tab.
+            </p>
             <p class="hint" data-advanced>
-              Drag a picture onto the page to add one, or write <code>![caption](id)</code> yourself. A figure with no picture
-              behind it leaves a ruled box, the way a page does before the diagram is drawn in.
+              Write <code>![caption](id)</code> to place one yourself. A figure with no picture behind it leaves a ruled box, the
+              way a page does before the diagram is drawn in.
             </p>
           </section>
 
@@ -356,6 +379,10 @@
 
           <section class="card" data-advanced>
             <h2>Fine tuning</h2>
+            <label class="field range">
+              <span>Letter shapes <output data-for="jitter.shape" data-format="times"></output></span>
+              <input type="range" data-key="jitter.shape" min="0" max="2" step="0.05" />
+            </label>
             <label class="field range">
               <span>Baseline wobble <output data-for="jitter.baseline" data-format="times"></output></span>
               <input type="range" data-key="jitter.baseline" min="0" max="2" step="0.05" />
@@ -459,6 +486,12 @@
             <button type="button" class="icon" id="next-page" aria-label="Next page">›</button>
           </div>
           <span class="muted" id="status" role="status" aria-live="polite"></span>
+          <button type="button" class="ghost small" id="reseed-stage" title="Same settings, written again: every letter, line and slip comes out differently">
+            <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+              <path d="M16 7a6.5 6.5 0 0 0-11.5-2M4 3v3h3M4 13a6.5 6.5 0 0 0 11.5 2M16 17v-3h-3" />
+            </svg>
+            <span class="label">Write it again</span>
+          </button>
           <label class="zoom">
             <span class="sr-only">Zoom</span>
             <select id="zoom">
@@ -483,6 +516,62 @@
     <div class="drop-overlay" id="drop-overlay" hidden>
       <div>Drop a PDF, Word file or text file to write it out by hand</div>
     </div>
+
+    <dialog class="sheet" id="hand-dialog" aria-labelledby="hand-title">
+      <div class="sheet-head">
+        <h2 id="hand-title">Your handwriting</h2>
+        <input type="text" id="hand-name" maxlength="40" aria-label="Name of this hand" />
+        <form method="dialog"><button class="ghost icon" aria-label="Close">×</button></form>
+      </div>
+      <div class="hand-body">
+        <div class="hand-chars" id="hand-chars" aria-label="Characters"></div>
+        <div class="hand-work">
+          <p class="hand-prompt">Write <b id="hand-char">a</b> <span class="muted" id="hand-char-name"></span> three times, once in each box.</p>
+          <canvas id="hand-pad" class="pad" aria-label="Writing pad"></canvas>
+          <div class="row wrap pad-tools">
+            <button type="button" class="ghost small" id="hand-undo">Undo</button>
+            <button type="button" class="ghost small" id="hand-clear">Clear</button>
+            <span class="spacer"></span>
+            <button type="button" class="small" id="hand-prev">‹ Back</button>
+            <button type="button" class="primary small" id="hand-next">Next ›</button>
+          </div>
+          <p class="hint">
+            Write as you would on paper, sitting on the solid line, small letters up to the dashed one. Write them a little
+            differently each time, as you naturally would. <kbd>Enter</kbd> moves on; <kbd>Backspace</kbd> takes back a stroke.
+          </p>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <label class="field inline">
+          <span>Letters not written yet come from</span>
+          <select id="hand-standin"></select>
+        </label>
+        <span class="muted" id="hand-progress"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost small" id="hand-export">Save to a file</button>
+        <label class="button ghost small">Open a file<input type="file" id="hand-import" accept=".json,application/json" hidden /></label>
+        <button type="button" class="ghost small danger" id="hand-delete">Delete</button>
+        <button type="button" class="primary" id="hand-use">Write with this hand</button>
+      </div>
+    </dialog>
+
+    <dialog class="sheet" id="sketch-dialog" aria-labelledby="sketch-title">
+      <div class="sheet-head">
+        <h2 id="sketch-title">Draw a diagram</h2>
+        <span class="spacer"></span>
+        <form method="dialog"><button class="ghost icon" aria-label="Close">×</button></form>
+      </div>
+      <div class="sketch-body">
+        <canvas id="sketch-pad" class="pad" aria-label="Drawing sheet"></canvas>
+        <div class="row wrap pad-tools">
+          <button type="button" class="ghost small" id="sketch-undo">Undo</button>
+          <button type="button" class="ghost small" id="sketch-clear">Clear</button>
+          <input type="text" id="sketch-caption" placeholder="Caption (optional)" aria-label="Caption" />
+          <button type="button" class="primary" id="sketch-insert">Put it on the page</button>
+        </div>
+        <p class="hint">It goes in where the cursor is in your text, and is drawn in the page's own pen and ink.</p>
+      </div>
+    </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

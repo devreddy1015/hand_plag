@@ -13,12 +13,16 @@
  *   **important**    pressed harder, so the ink is heavier
  *   _slanted_        leaned over further
  *   __underlined__   underlined by hand
+ *   x^2, x^{n+1}     written small and raised
+ *   H_2O, x_{i}      written small and dropped
  *   ![caption](id)   a diagram, drawn out and captioned
  *   [[page]]         start a new sheet
  *
  * With `markdown: false` only `[[page]]` is honoured and everything else is
  * written literally, so pasted text that happens to contain `#` or `*` is
- * never silently reinterpreted.
+ * never silently reinterpreted. Unicode superscripts and subscripts (², ₂)
+ * are always written as small raised or dropped figures, since no hand has a
+ * separate letter for them.
  */
 
 /** A line containing only this marker starts a new page. */
@@ -30,6 +34,8 @@ export type BlockKind = 'paragraph' | 'heading' | 'list' | 'quote' | 'divider' |
 export const EM_BOLD = 1;
 export const EM_ITALIC = 2;
 export const EM_UNDERLINE = 4;
+export const EM_SUP = 8;
+export const EM_SUB = 16;
 
 export interface Block {
   kind: BlockKind;
@@ -146,19 +152,56 @@ const INLINE_RULES: Rule[] = [
 
 const LINK = /\[([^\]]+)\]\((?:[^)\s]+)(?:\s+"[^"]*")?\)/g;
 
+// Superscripts and subscripts. The short forms are kept to what is
+// unambiguous in running text: a caret is rarely anything else, but an
+// underscore sits inside names, so only digits follow one without braces.
+const SCRIPT_RULES: Rule[] = [
+  { re: /\^\{([^{}]+)\}/g, bits: EM_SUP },
+  { re: /(?<=[\p{L}\p{N})\]])_\{([^{}]+)\}/gu, bits: EM_SUB },
+  { re: /(?<=[\p{L}\p{N})\]])\^([+-]?(?:\d+(?:\.\d+)?|\p{L}+))/gu, bits: EM_SUP },
+  { re: /(?<=[\p{L})\]])_(\d+)/gu, bits: EM_SUB },
+];
+
+const SUPERSCRIPTS: Record<string, string> = {
+  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+  '⁺': '+', '⁻': '-', '⁼': '=', '⁽': '(', '⁾': ')', 'ⁿ': 'n', 'ⁱ': 'i',
+};
+const SUBSCRIPTS: Record<string, string> = {
+  '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+  '₊': '+', '₋': '-', '₌': '=', '₍': '(', '₎': ')', 'ₐ': 'a', 'ₑ': 'e', 'ₒ': 'o', 'ₓ': 'x',
+  'ₕ': 'h', 'ₖ': 'k', 'ₗ': 'l', 'ₘ': 'm', 'ₙ': 'n', 'ₚ': 'p', 'ₛ': 's', 'ₜ': 't',
+};
+const UNICODE_SCRIPT = /[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ₀-₎ₐₑₒₓₕₖₗₘₙₚₛₜ]/;
+
 /**
  * Strip inline markers from a block and record which characters they
  * emphasised. Runs the rules one at a time over the whole string so nested
  * markers (`**bold _and slanted_**`) keep both flags.
  */
 function withInline(b: Block, markdown: boolean): Block {
-  if (!markdown || !/[*_`[]/.test(b.text)) return b;
+  const scripts = UNICODE_SCRIPT.test(b.text);
+  if (!scripts && (!markdown || !/[*_`[^]/.test(b.text))) return b;
 
-  let text = b.text.replace(LINK, '$1');
+  let text = markdown ? b.text.replace(LINK, '$1') : b.text;
   let flags = new Uint8Array(text.length);
   let touched = false;
 
-  for (const rule of INLINE_RULES) {
+  if (scripts) {
+    // One character for one, so the flags stay in step with the text.
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const sup = SUPERSCRIPTS[ch];
+      const sub = SUBSCRIPTS[ch];
+      if (sup !== undefined) flags[i] |= EM_SUP;
+      if (sub !== undefined) flags[i] |= EM_SUB;
+      out += sup ?? sub ?? ch;
+    }
+    text = out;
+    touched = true;
+  }
+
+  for (const rule of markdown ? [...SCRIPT_RULES, ...INLINE_RULES] : []) {
     let out = '';
     const next: number[] = [];
     let last = 0;
@@ -166,10 +209,10 @@ function withInline(b: Block, markdown: boolean): Block {
     let m: RegExpExecArray | null;
     while ((m = rule.re.exec(text)) !== null) {
       const inner = m[1];
-      const markerLen = (m[0].length - inner.length) / 2;
       for (let i = last; i < m.index; i++) next.push(flags[i]);
       out += text.slice(last, m.index);
-      const innerStart = m.index + markerLen;
+      // Markers may differ at each end (^{ and }), so find the inner text itself.
+      const innerStart = m.index + m[0].indexOf(inner);
       for (let i = 0; i < inner.length; i++) next.push(flags[innerStart + i] | rule.bits);
       out += inner;
       last = m.index + m[0].length;

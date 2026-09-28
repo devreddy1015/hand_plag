@@ -34,6 +34,12 @@ export interface FigureLimits {
    * from the drawing itself, so this affects what joins up, never the extent.
    */
   spread?: number;
+  /**
+   * Blocks side by side in one row join up across a gap this wide: the boxes
+   * of a flowchart, with the arrows between them drawn thinner than the
+   * boxes, are one figure.
+   */
+  rowGap?: number;
 }
 
 const right = (b: Box) => b.x + b.width;
@@ -118,7 +124,8 @@ export function findFigureBoxes(grid: Uint8Array, cols: number, rows: number, li
   // Join the parts up first and judge what they add up to afterwards: the box
   // round one label, the arrow beside it and the circle it points at are each
   // too small to be a figure, and together they are one.
-  return merge(blobs, limits.cell * 3)
+  const joined = merge(blobs, limits.cell * 3);
+  return (limits.rowGap ? mergeRows(joined, limits.rowGap) : joined)
     .filter((blob) => keep(blob.box, density(blob, limits.cell), limits))
     .map((blob) => blob.box)
     .sort((a, b) => a.y - b.y || a.x - b.x);
@@ -173,6 +180,33 @@ function merge(blobs: Blob[], gap: number): Blob[] {
       for (let j = i + 1; j < out.length; j++) {
         if (!near(out[i].box, out[j].box, gap)) continue;
         out[i] = { box: union(out[i].box, out[j].box), filled: out[i].filled + out[j].filled };
+        out.splice(j, 1);
+        joined = true;
+        break outer;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Join blocks that share a row — most of the height of the smaller one lies
+ * alongside the other — and stand within `gap` of each other.
+ */
+function mergeRows(blobs: Blob[], gap: number): Blob[] {
+  const out = [...blobs];
+  let joined = true;
+  while (joined) {
+    joined = false;
+    outer: for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const a = out[i].box;
+        const b = out[j].box;
+        const shared = Math.min(bottom(a), bottom(b)) - Math.max(a.y, b.y);
+        if (shared < Math.min(a.height, b.height) * 0.5) continue;
+        const apart = Math.max(a.x, b.x) - Math.min(right(a), right(b));
+        if (apart > gap) continue;
+        out[i] = { box: union(a, b), filled: out[i].filled + out[j].filled };
         out.splice(j, 1);
         joined = true;
         break outer;
@@ -275,7 +309,7 @@ export function absorbText(boxes: Box[], lines: Line[], bodySize: number, bodyWi
       grew = false;
       for (const line of lines) {
         if (consumed.has(line)) continue;
-        if (!inside(line, box, bodySize, bodyWidth)) continue;
+        if (!inside(line, box, bodySize, bodyWidth) && !attached(line, box, bodySize, bodyWidth)) continue;
         consumed.add(line);
         box = union(box, { x: line.x0, y: line.y - bodySize, width: line.x1 - line.x0, height: bodySize * 1.3 });
         grew = true;
@@ -331,6 +365,28 @@ export function absorbText(boxes: Box[], lines: Line[], bodySize: number, bodyWi
   }
 
   return { figures, consumed };
+}
+
+/**
+ * A label standing just outside the drawing: the title over a chart, the
+ * name of an axis beside it, the quantity an arrow points to. It is short, no
+ * bigger than the running text, not a sentence, and lined up with the figure.
+ */
+function attached(line: Line, box: Box, bodySize: number, bodyWidth: number): boolean {
+  const width = line.x1 - line.x0;
+  if (width > Math.min(bodyWidth * 0.45, Math.max(box.width, bodySize * 6))) return false;
+  if (line.size > bodySize * 1.08) return false;
+  if (/[.!?;]$/.test(line.text) || line.text.split(/\s+/).length > 6 || CAPTION.test(line.text)) return false;
+  const top = line.y - line.size;
+  const foot = line.y + line.size * 0.3;
+  const gapX = Math.max(0, box.x - line.x1, line.x0 - right(box));
+  const gapY = Math.max(0, box.y - foot, top - bottom(box));
+  if (gapX > bodySize * 1.6 || gapY > bodySize * 1.4) return false;
+  // Above or below: its middle must be over the figure. Beside: level with it.
+  const midX = (line.x0 + line.x1) / 2;
+  const midY = line.y - line.size * 0.35;
+  if (gapY > 0) return midX > box.x && midX < right(box);
+  return midY > box.y && midY < bottom(box);
 }
 
 function inside(line: Line, box: Box, bodySize: number, bodyWidth: number): boolean {

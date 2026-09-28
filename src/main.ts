@@ -9,9 +9,13 @@ import {
   type Settings,
 } from './engine';
 import { BYTES_PER_PIXEL, downloadBlob, safeFilename, type ExportJob } from './export/download';
-import { addCustomFont, allFonts, loadFontCss, type FontEntry } from './fonts';
+import { addCustomFont, allFonts, loadFontCss, setOwnHands, type FontEntry } from './fonts';
+import { buildHand, loadHands, type BuiltHand } from './hands';
 import { detectKind, importDocument, type PdfOptions } from './import';
-import { addPicture, addPictureFile, clearPictures, pictureCount } from './images';
+import { addPicture, addPictureFile, addTracedPicture, clearPictures, pictureCount, restorePictures } from './images';
+import { forgetPicturesExcept, pictureIdsIn } from './store';
+import { openHandDialog } from './ui/hand-dialog';
+import { drawSketch } from './ui/sketch-dialog';
 import { reflowHardWraps } from './import/shared';
 import { drawPage, drawPaperOnly, prepare, type Prepared } from './pipeline';
 import { PRESETS, applyPreset } from './ui/presets';
@@ -57,7 +61,24 @@ function loadSettings(): Settings {
   } catch {
     // Storage blocked or corrupt: fall back to defaults.
   }
-  return structuredClone(DEFAULT_SETTINGS);
+  return freshDefaults();
+}
+
+/**
+ * The default settings with a hand of one's own. The random seed decides
+ * every wobble on the page, so a fixed default would give everyone who types
+ * the same words the very same page.
+ */
+function freshDefaults(): Settings {
+  const fresh = structuredClone(DEFAULT_SETTINGS);
+  fresh.seed = randomSeed();
+  return fresh;
+}
+
+function randomSeed(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] >>> 1;
 }
 
 function loadImportOptions(): PdfOptions {
@@ -192,6 +213,9 @@ function syncControls(): void {
   for (const tile of document.querySelectorAll<HTMLButtonElement>('#fonts .tile')) {
     tile.setAttribute('aria-pressed', String(tile.dataset.font === settings.fontId));
   }
+  document.querySelectorAll<HTMLElement>('#own-hands .own-hand-row').forEach((row, i) => {
+    row.setAttribute('aria-current', String(settings.fontId === `hand:${ownHands[i]?.id}`));
+  });
   $<HTMLInputElement>('#opt-page-breaks').checked = importOptions.keepPageBreaks;
   $<HTMLInputElement>('#opt-headings').checked = importOptions.detectHeadings;
   $<HTMLInputElement>('#opt-heads').checked = importOptions.dropRunningHeads;
@@ -275,9 +299,22 @@ function bindControls(): void {
   buildTemplates();
   buildFonts();
 
-  $<HTMLButtonElement>('#reseed').addEventListener('click', () => {
-    settings.seed = (Math.random() * 2 ** 31) | 0;
+  const reseed = () => {
+    settings.seed = randomSeed();
     onSettingChanged('seed');
+  };
+  $<HTMLButtonElement>('#reseed').addEventListener('click', reseed);
+  $<HTMLButtonElement>('#reseed-stage').addEventListener('click', reseed);
+  $<HTMLButtonElement>('#quick-pdf').addEventListener('click', () => runExport('pdf'));
+
+  $<HTMLButtonElement>('#hand-new').addEventListener('click', () => openHand(null));
+  $<HTMLButtonElement>('#draw-diagram').addEventListener('click', async () => {
+    const drawn = await drawSketch();
+    if (!drawn) return;
+    const id = `sketch-${Date.now().toString(36)}`;
+    await addPicture(id, drawn.dataUrl, { sketch: drawn.sketch, kind: 'figure' });
+    insertAtCursor(`\n![${drawn.caption.replace(/[[\]()]/g, ' ')}](${id})\n`);
+    toast('Your diagram is on the page, drawn in the page’s own pen.');
   });
 
   $<HTMLButtonElement>('#reflow-text').addEventListener('click', () => {
@@ -311,7 +348,7 @@ function bindControls(): void {
 
   $<HTMLButtonElement>('#reset-all').addEventListener('click', () => {
     const keep = settings.text;
-    Object.assign(settings, structuredClone(DEFAULT_SETTINGS));
+    Object.assign(settings, freshDefaults());
     settings.text = keep;
     history.replaceState(null, '', location.pathname);
     onSettingChanged('reset');
@@ -504,6 +541,126 @@ function buildTemplates(): void {
   }
 }
 
+// ------------------------------------------------------------- your own hands
+
+let ownHands: BuiltHand[] = [];
+
+/** Read the hands written on this device, and offer them in the gallery. */
+function refreshHands(): void {
+  ownHands = loadHands().map(buildHand);
+  setOwnHands(ownHands);
+  renderOwnHands();
+}
+
+function openHand(id: string | null): void {
+  openHandDialog(id, {
+    saved: () => {
+      refreshHands();
+      buildFonts();
+      if (settings.fontId.startsWith('hand:')) scheduleLayout(60);
+    },
+    use: (hand) => {
+      refreshHands();
+      buildFonts();
+      settings.fontId = `hand:${hand.id}`;
+      onSettingChanged('fontId');
+      const built = ownHands.find((h) => h.id === hand.id);
+      toast(
+        built && built.written < 26
+          ? `Writing in “${hand.name}”. Letters you haven't written yet are borrowed, so write more to make it all yours.`
+          : `Writing in “${hand.name}”.`,
+      );
+    },
+    toast,
+  });
+}
+
+/** The hands you have written, each with a line in its own letters. */
+function renderOwnHands(): void {
+  const box = $<HTMLDivElement>('#own-hands');
+  box.replaceChildren();
+  for (const hand of ownHands) {
+    const row = document.createElement('div');
+    row.className = 'own-hand-row';
+    row.setAttribute('aria-current', String(settings.fontId === `hand:${hand.id}`));
+    const canvas = document.createElement('canvas');
+    drawHandSample(canvas, hand, sampleWords(hand));
+    const who = document.createElement('div');
+    who.className = 'who';
+    const name = document.createElement('b');
+    name.textContent = hand.name;
+    const note = document.createElement('small');
+    note.textContent = `${hand.written} ${hand.written === 1 ? 'character' : 'characters'} written`;
+    who.append(name, note);
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'small';
+    use.textContent = 'Use';
+    use.addEventListener('click', () => {
+      settings.fontId = `hand:${hand.id}`;
+      onSettingChanged('fontId');
+    });
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'ghost small';
+    edit.textContent = 'Edit';
+    edit.addEventListener('click', () => openHand(hand.id));
+    row.append(canvas, who, use, edit);
+    box.append(row);
+  }
+  $<HTMLButtonElement>('#hand-new').textContent = ownHands.length > 0 ? 'Write another hand' : 'Write your alphabet';
+}
+
+/** Something to show a hand with: a phrase if it has the letters, or the letters it has. */
+function sampleWords(hand: BuiltHand): string {
+  for (const phrase of ['hello there', 'handwriting', 'the notes', 'hello']) {
+    if ([...phrase].every((ch) => ch === ' ' || hand.has(ch))) return phrase;
+  }
+  return [...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'].filter((ch) => hand.has(ch)).slice(0, 9).join('');
+}
+
+/** A few words in a hand of your own, drawn straight from its strokes. */
+function drawHandSample(canvas: HTMLCanvasElement, hand: BuiltHand, text: string): void {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = 120;
+  const cssH = 34;
+  canvas.width = cssW * dpr;
+  canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const size = (cssH * 0.55) / Math.max(0.3, hand.capHeight);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = getComputedStyle(canvas.isConnected ? canvas : document.body).color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1, size * hand.weight);
+  let x = 4;
+  const base = cssH * 0.72;
+  for (const ch of text) {
+    if (ch === ' ') {
+      x += size * 0.3;
+      continue;
+    }
+    const glyph = hand.glyph(ch, 0);
+    if (!glyph) {
+      x += size * 0.35;
+      continue;
+    }
+    for (const stroke of glyph.strokes) {
+      ctx.beginPath();
+      for (let i = 0; i < stroke.length; i += 3) {
+        const px = x + stroke[i] * size;
+        const py = base + stroke[i + 1] * size;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    x += glyph.advance * size;
+    if (x > cssW) break;
+  }
+}
+
 let fontObserver: IntersectionObserver | null = null;
 
 function buildFonts(): void {
@@ -533,7 +690,7 @@ function buildFonts(): void {
     }
     const tile = fontTile(font);
     box.append(tile);
-    if (!font.custom) fontObserver.observe(tile);
+    if (!font.custom && !font.hand) fontObserver.observe(tile);
   }
   $<HTMLSpanElement>('#font-count').textContent = `${fonts.length} hands`;
 }
@@ -547,8 +704,14 @@ function fontTile(font: FontEntry): HTMLButtonElement {
   tile.title = `${font.label}: ${font.note}`;
   const sample = document.createElement('div');
   sample.className = 'sample';
-  sample.style.fontFamily = `"${font.family}", cursive`;
-  sample.textContent = font.label;
+  if (font.hand) {
+    const canvas = document.createElement('canvas');
+    drawHandSample(canvas, font.hand, sampleWords(font.hand));
+    sample.append(canvas);
+  } else {
+    sample.style.fontFamily = `"${font.family}", cursive`;
+    sample.textContent = font.label;
+  }
   const note = document.createElement('small');
   note.textContent = font.note;
   tile.append(sample, note);
@@ -809,18 +972,25 @@ async function runImport(file: File): Promise<void> {
       return;
     }
     clearPictures('pdf-');
+    clearPictures('docx-');
     if (result.images) {
       await Promise.all(
         result.images.map((picture) =>
-          addPicture(picture.id, picture.dataUrl, {
-            kind: picture.kind ?? 'figure',
-            pointWidth: picture.pointWidth,
-            sourceSize: picture.sourceSize,
-          }).catch(() => undefined),
+          // A PDF's figures come traced already; a Word file's are traced here.
+          (picture.sketch || picture.kind === 'math' || picture.kind === 'photo'
+            ? addPicture(picture.id, picture.dataUrl, {
+                kind: picture.kind ?? 'figure',
+                pointWidth: picture.pointWidth,
+                sourceSize: picture.sourceSize,
+                sketch: picture.sketch,
+              })
+            : addTracedPicture(picture.id, picture.dataUrl)
+          ).catch(() => undefined),
         ),
       );
     }
     settings.text = result.text;
+    void forgetPicturesExcept(pictureIdsIn(settings.text));
     exportTitle = safeFilename(file.name);
     const words = result.text.trim().split(/\s+/).length;
     const from = result.pageCount > 0 ? ` from ${result.pageCount} ${result.pageCount === 1 ? 'page' : 'pages'}` : '';
@@ -945,6 +1115,14 @@ async function runExport(kind: 'pdf' | 'png'): Promise<void> {
 // ----------------------------------------------------------------------- boot
 
 populateSelects();
+refreshHands();
 bindControls();
 syncControls();
-runLayout();
+// The pictures a saved document refers to come back before its first page is drawn.
+void restorePictures(pictureIdsIn(settings.text))
+  .catch(() => 0)
+  .then(() => {
+    void forgetPicturesExcept(pictureIdsIn(settings.text));
+    syncControls();
+    return runLayout();
+  });

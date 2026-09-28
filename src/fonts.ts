@@ -9,6 +9,8 @@
  * download to write one page of English.
  */
 import { detectScripts, scriptOf, type Measurer, type ScriptTag } from './engine';
+import type { BuiltHand } from './hands';
+import { registerOutlines } from './outlines';
 
 
 /** The @font-face rules for each family, fetched the first time it is used. */
@@ -58,7 +60,7 @@ export function styledFamilies(): string[] {
   return Object.keys(FONT_CSS);
 }
 
-export type FontGroup = 'Print' | 'Cursive' | 'Bold hand' | 'World scripts' | 'Your fonts';
+export type FontGroup = 'Your hands' | 'Print' | 'Cursive' | 'Bold hand' | 'World scripts' | 'Your fonts';
 
 export interface FontEntry {
   id: string;
@@ -74,6 +76,8 @@ export interface FontEntry {
   /** Letters join up (cursive), so per-letter jitter is damped. */
   connected?: boolean;
   custom?: boolean;
+  /** Your own handwriting, written on the pad. `family` is then the hand that stands in for letters not yet written. */
+  hand?: BuiltHand;
 }
 
 export const FONTS: FontEntry[] = [
@@ -192,9 +196,24 @@ const FALLBACKS: Partial<Record<ScriptTag, string>> = {
 };
 
 const customFonts: FontEntry[] = [];
+let handFonts: FontEntry[] = [];
+
+/** Offer these hands of your own at the top of the gallery. */
+export function setOwnHands(hands: BuiltHand[]): void {
+  handFonts = hands.map((hand) => ({
+    id: `hand:${hand.id}`,
+    family: hand.standIn,
+    label: hand.name,
+    note: `${hand.name} · ${hand.written} ${hand.written === 1 ? 'letter' : 'letters'}`,
+    group: 'Your hands',
+    scripts: ['latin'],
+    license: 'Your own',
+    hand,
+  }));
+}
 
 export function allFonts(): FontEntry[] {
-  return [...customFonts, ...FONTS];
+  return [...handFonts, ...customFonts, ...FONTS];
 }
 
 export function findFont(id: string): FontEntry {
@@ -307,9 +326,12 @@ export function createMeasurer(stack: string, fontPx: number): Measurer {
 export async function addCustomFont(file: File): Promise<FontEntry> {
   const name = file.name.replace(/\.(ttf|otf|woff2?)$/i, '').slice(0, 40) || 'My font';
   const family = `User Font ${customFonts.length + 1} ${name}`.replace(/["\\]/g, '');
-  const face = new FontFace(family, await file.arrayBuffer());
+  const buffer = await file.arrayBuffer();
+  const face = new FontFace(family, buffer);
   await face.load();
   document.fonts.add(face);
+  // Its outlines too, so its letters can be bent like any other hand's.
+  await registerOutlines(family, buffer.slice(0));
   metricCache.delete(family);
   const entry: FontEntry = {
     id: `custom:${family}`,

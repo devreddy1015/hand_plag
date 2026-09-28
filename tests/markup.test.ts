@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EM_BOLD, EM_ITALIC, EM_UNDERLINE, parseBlocks } from '../src/engine/markup';
+import { EM_BOLD, EM_ITALIC, EM_SUB, EM_SUP, EM_UNDERLINE, parseBlocks } from '../src/engine/markup';
 
 const kinds = (text: string, markdown = true) => parseBlocks(text, markdown).map((b) => b.kind);
 
@@ -88,5 +88,32 @@ describe('parseBlocks', () => {
 
   it('drops the blank lines at the end of a document', () => {
     expect(kinds('text\n\n\n')).toEqual(['paragraph']);
+  });
+});
+
+describe('superscripts and subscripts', () => {
+  const scripted = (text: string, markdown = true) => {
+    const [block] = parseBlocks(text, markdown);
+    const flags = block.emphasis ?? new Uint8Array(block.text.length);
+    return { text: block.text, sup: [...block.text].filter((_, i) => flags[i] & EM_SUP).join(''), sub: [...block.text].filter((_, i) => flags[i] & EM_SUB).join('') };
+  };
+
+  it('reads braces, carets and chemical subscripts', () => {
+    expect(scripted('E = mc^2')).toEqual({ text: 'E = mc2', sup: '2', sub: '' });
+    expect(scripted('x^{n+1} and y_{i}')).toEqual({ text: 'xn+1 and yi', sup: 'n+1', sub: 'i' });
+    expect(scripted('H_2O and CO_2')).toEqual({ text: 'H2O and CO2', sup: '', sub: '22' });
+    expect(scripted('10^-3 m')).toEqual({ text: '10-3 m', sup: '-3', sub: '' });
+  });
+
+  it('leaves underscores in names alone', () => {
+    expect(scripted('snake_case and file_name')).toEqual({ text: 'snake_case and file_name', sup: '', sub: '' });
+  });
+
+  it('writes Unicode superscripts and subscripts as small figures, markdown or not', () => {
+    expect(scripted('CO₂ and x²', false)).toEqual({ text: 'CO2 and x2', sup: '2', sub: '2' });
+  });
+
+  it('keeps a full stop after a power out of it', () => {
+    expect(scripted('about 2^10.')).toEqual({ text: 'about 210.', sup: '10', sub: '' });
   });
 });

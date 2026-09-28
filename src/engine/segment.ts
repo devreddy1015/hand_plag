@@ -206,3 +206,64 @@ export function gapBeforeFactor(word: string): number {
   if (first === '(' || first === '[' || first === '“' || first === '"') return 1.1;
   return 1;
 }
+
+/**
+ * What a person writes for a typed character that a hand has no letter for.
+ * Typesetting has its own characters — curly quotes, dashes of three
+ * lengths, a single glyph for an ellipsis — that handwriting never had: a
+ * writer puts down two ticks, a short stroke, three dots.
+ */
+const WRITTEN_FORMS: Record<string, string> = {
+  '\u2018': "'",
+  '\u2019': "'",
+  '\u201a': ',',
+  '\u201b': "'",
+  '\u2032': "'",
+  '\u02bc': "'",
+  '\u201c': '"',
+  '\u201d': '"',
+  '\u201e': '"',
+  '\u201f': '"',
+  '\u2033': '"',
+  '\u00ab': '"',
+  '\u00bb': '"',
+  '\u2039': "'",
+  '\u203a': "'",
+  '\u2010': '-',
+  '\u2011': '-',
+  '\u2012': '-',
+  '\u2013': '-',
+  '\u2014': '-',
+  '\u2015': '-',
+  '\u2212': '-',
+  '\u2026': '...',
+  '\u2022': '-',
+  '\u2023': '-',
+  '\u25e6': '-',
+  '\u00b7': '.',
+  '\u00d7': 'x',
+  '\u00f7': '/',
+  '\u2264': '<=',
+  '\u2265': '>=',
+  '\u2260': '=/=',
+  '\u2192': '->',
+  '\u2190': '<-',
+  '\u21d2': '=>',
+  '\u00b1': '+/-',
+  '\u00a9': '(c)',
+  '\u00ae': '(R)',
+  '\u2122': 'TM',
+  '\u00bd': '1/2',
+  '\u00bc': '1/4',
+  '\u00be': '3/4',
+  '\ufb00': 'ff',
+  '\ufb01': 'fi',
+  '\ufb02': 'fl',
+  '\ufb03': 'ffi',
+  '\ufb04': 'ffl',
+};
+
+/** The plain written form of a typographic character, or the unit itself. */
+export function writtenForm(unit: string): string {
+  return WRITTEN_FORMS[unit] ?? unit;
+}

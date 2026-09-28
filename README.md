@@ -22,41 +22,60 @@ boundaries, and drops the running headers, footers and page numbers that should 
 written out again. A 15-page PDF becomes about 30 handwritten pages in a couple of
 seconds.
 
-**Copies the equations out.** Mathematics does not survive being read back as text: a
+**Writes the equations out.** Mathematics does not survive being read back as text: a
 displayed formula is a two-dimensional arrangement of glyph runs, so reading it line by
 line turns one equation into three lines of nonsense. Displayed equations are found
 instead — by the fonts they are set in (`CMMI`, `CMSY` and `CMEX` are TeX's maths fonts),
-by being set in from the margin, and by being stacked more tightly than prose — and cut
-out of the page, then written onto the sheet at the size of the handwriting around them.
-Inline maths inside a paragraph is left where it is.
+by being set in from the margin, and by being stacked more tightly than prose — and then
+written out by hand where each piece stood: the letters and numbers in the hand, the
+fraction bars, roots and big brackets traced and drawn with the pen. Handwriting fonts
+stop at the alphabet, so Greek letters and about a hundred mathematical signs (α, Δ, ∫,
+√, ≤, →, ∂, ∇, ℝ …) are drawn as pen strokes in the writer's own ink, fitted to the
+hand's x-height and capital height. Superscripts and subscripts (`x^2`, `H_2O`, `x^{n+1}`,
+or Unicode ² and ₂) are written small, raised and dropped, and a PDF's own are kept as
+such.
 
-**Brings the diagrams with it.** A PDF never says "this is a figure" either, so pages
-that draw something are rasterised, the text is masked out of the picture, and what is
-left is treated as figures: connected blocks of drawing, joined up, measured, and cut
-out. Each one keeps what belongs to it — the labels inside it, the axis titles under it,
-and the caption beneath — so a chart arrives as a chart with its caption, rather than as
-a scattering of stray words in the middle of a paragraph. Line art (diagrams, charts,
-tables) is **copied out in the writer's own pen**; photographs stay photographs, because
-no one draws a micrograph by hand. Drag a picture onto the page to add your own, or write
-`![caption](id)` yourself. A figure the app has no picture for leaves a ruled box, which
-is what a page looks like before the diagram is drawn in.
+**Draws the diagrams again, by hand.** A PDF never says "this is a figure" either, so
+pages that draw something are rasterised, the text is masked out of the picture, and what
+is left is treated as figures: connected blocks of drawing, joined up, measured, and cut
+out, together with the labels, axis titles and caption that belong to them. Each figure is
+then *traced*: thinned to the centre line of every stroke, followed from end to end and
+through crossings, and simplified to the few points that describe it. Solid areas — bars,
+pie slices, arrowheads — are set aside and shaded instead of traced, with each colour
+getting its own hatching so two series can still be told apart. On the page, every line is
+drawn once with the pen, a little bowed and unsteady, stopping short of a corner or running
+past it; the labels are written in the page's own handwriting, where they stood. Word files'
+pictures and pictures you drag in are traced the same way. Photographs stay photographs,
+stuck on as prints, because no one draws a micrograph by hand. **Draw a diagram** opens a
+sheet to sketch your own.
 
-**Writes it by hand.** 19 handwriting fonts, or upload your own. The layout engine is
-built around how people actually write, not how a typesetter sets type:
+**Writes it by hand.** 19 handwriting fonts, your own uploaded font — or, best of all,
+**your own handwriting**: write each letter three times on the pad with a finger, a stylus
+or the mouse, and the page is written in your hand, drawn back stroke by stroke with the
+chosen pen. It cannot be matched to any font, because it is not one. A half-written hand
+works too: letters not written yet are borrowed from a print hand, scaled to match. Hands
+are kept in the browser and can be saved to a file. The layout engine is built around how
+people actually write, not how a typesetter sets type:
 
+- No two copies of a letter are the same. A font draws every "e" identically; here each one
+  is bent before it is drawn — the ascender a little taller, the bowl a little wider, the
+  loop closing somewhere else — in two layers, as in a real hand: a few habitual forms of
+  each letter, and the small differences of each copy.
 - The hand is steady inside a word and wanders between words; it drifts slowly in size,
   slant and spacing over many lines, and gets messier down the page and through the
-  document.
+  document. Words never run together.
 - Lines are filled the way a writer fills them: crammed a little, run past the margin, or
   hyphenated, rather than left conspicuously short. Letters crowd together as the margin
-  approaches.
-- Each letter has several fixed variants, so a repeated letter is never identical, and a
-  letter's persona (its own slight tilt, size and baseline) stays consistent through the
-  document.
+  approaches. A figure that will not fit is drawn at the top of the next page while the
+  writing carries on underneath, rather than leaving half a page empty.
 - Optional human corrections: a word started wrong and crossed out, one squeezed in above
   a caret, a dot of ink left where the pen rested.
+- Typed characters a hand never writes — curly quotes, three kinds of dash, a one-glyph
+  ellipsis, ligatures — are written the way a person writes them.
 - Headings are written larger and underlined by hand, bullets are dabbed on, `**bold**` is
   pressed harder, `_italic_` leans further.
+- Every page is written from a random seed of its own, so two people typing the same words
+  never get the same page. **Write it again** rolls a new one.
 
 **On the right paper.** 20 paper templates — exercise book, school notebook with a double
 red margin, college and wide ruled, spiral-bound, torn-out, four-line practice paper,
@@ -68,16 +87,19 @@ through from the back, a torn edge.
 
 **Written with a real pen.** Ballpoint, gel, rollerball, fountain, calligraphy nib, felt
 tip and pencil. A nib is drawn as a nib — several passes across its width — so strokes
-across it are broad and strokes along it are fine. Ink bleeds into the paper, pools where
-the pen is set down, varies in flow and pressure, and pencil is broken up by the tooth of
-the paper.
+across it are broad and strokes along it are fine. Lines drawn with the pen (underlines,
+diagrams, your own letters) thin where the pen touches down and lifts off. The ink goes
+down unevenly, as it does on paper, bleeds into the paper, dries darker at the edge of a
+gel or fountain-pen stroke, pools where the pen is set down, and pencil is broken up by the
+tooth of the paper.
 
 **Handed over how you like.** Flat art, a flatbed scan (crooked, uneven lamp, sensor
 noise), or a photo on a desk (keystoned, lit from one side, casting a shadow). Export a
-multi-page PDF or PNG/JPEG images at 150–400 DPI, all pages or a range.
+multi-page PDF or PNG/JPEG images at 150–400 DPI, all pages or a range. The PDF carries
+its title and nothing else: no creator or producer stamp.
 
-The panel opens with the settings most people need — the paper, the hand, the pen and the
-download button. **All settings** in the header brings out the rest: margins, printed
+The panel opens with the settings most people need — the paper, the hand, the pen — and
+**Download PDF** sits in the top bar. **All settings** in the header brings out the rest: margins, printed
 furniture, the ten realism weights, page ranges and the like. The choice is remembered.
 
 ## Run it
@@ -85,7 +107,7 @@ furniture, the ten realism weights, page ranges and the like. The choice is reme
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm test           # unit tests: layout, paper, markup, PDF reflow, figures, segmentation
+npm test           # unit tests: layout, paper, markup, PDF reflow, figures, tracing, letter shapes, hands
 npm run build      # static site in dist/
 npm run preview    # serve the built site
 ```
@@ -119,7 +141,11 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 | --- | --- |
 | `src/engine/` | The portable engine. No DOM: it needs only a Canvas 2D context and a text measurer, so the same code can run in a Web Worker or on a server (for example with `@napi-rs/canvas`) for a future rendering API. |
 | `src/engine/layout.ts` | Splits blocks into lines and pages. Samples the jitter for each glyph from seeds based on position, so editing one paragraph doesn't reshuffle the others. |
-| `src/engine/render.ts` | Paints one page at any scale: paper, then the ink layer blended with multiply, then the finish. |
+| `src/engine/render.ts` | Paints one page at any scale: paper, then the ink layer blended with multiply, then the finish. Letters are drawn from their bent outlines, pen lines as pen strokes. |
+| `src/engine/shapes.ts` | Letter outlines and the two-layer bend (habitual form, and this copy) that keeps any two copies of a letter from matching. |
+| `src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. |
+| `src/engine/symbols.ts` | Greek letters and mathematical signs as pen strokes, fitted to the hand they are written in. |
+| `src/engine/sketch.ts` | Drawing a traced diagram by hand: bowed, unsteady lines, overshooting corners, closing overlaps, hatching per colour. |
 | `src/engine/paper.ts` | Paper sizes, page geometry, printed furniture and the procedural paper texture. |
 | `src/engine/templates.ts` | The paper templates and the features each one turns on. |
 | `src/engine/markup.ts` | The small Markdown subset that maps onto things a hand can do. |
@@ -127,7 +153,10 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 | `src/import/reflow.ts` | Rebuilding a document from positioned text: lines, columns, paragraphs, headings, lists, running heads. Pure, and tested on its own. |
 | `src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, which text belongs to which figure, and fitting a box to the ink. Pure, and tested on its own. |
 | `src/import/math.ts` | Finding the displayed equations, so they can be copied out rather than mangled. Pure, and tested on its own. |
-| `src/images.ts` | The pictures a document refers to, decoded and ready to draw. |
+| `src/import/vectorize.ts` | Tracing a picture into pen paths: ink threshold, solid areas by opening, Zhang–Suen thinning, path following through junctions, spur pruning, simplification. Pure, and tested on its own. |
+| `src/images.ts`, `src/store.ts` | The pictures a document refers to, decoded and ready to draw, traced if they are line art, and kept in IndexedDB so a document keeps its figures between visits. |
+| `src/outlines.ts` | Reads the letter outlines out of each hand's WOFF files (opentype.js), loaded on first use. |
+| `src/hands.ts`, `src/ui/pad.ts`, `src/ui/hand-dialog.ts` | Your own handwriting: the writing pad, the samples, and turning them into a hand. |
 | `src/import/pdf.ts`, `docx.ts` | The readers themselves, loaded on first use. |
 | `src/fonts.ts` | Font catalog, fallback stacks, per-script size matching, custom font upload. `@font-face` rules load per font, on demand. |
 | `src/export/` | PDF (pdf-lib) and PNG/JPEG/ZIP (fflate). Both load only when you first export. |
@@ -145,7 +174,9 @@ out from the right margin.
 ## Performance
 
 A 78,000-character document (49 A4 pages) lays out in well under a second and exports at
-200 DPI in about eight seconds, roughly 145 ms per page. Thumbnails are painted only when
+200 DPI in about eight seconds, roughly 145 ms per page. A 13-page PDF with 40 figures and
+equations is read, and every figure traced, in under two seconds, and its 20 handwritten
+pages export at 300 DPI in about five. Thumbnails are painted only when
 they scroll into view, so a 300-page document opens as quickly as a one-page one.
 
 Still to do: move layout into a Web Worker so documents of several hundred thousand
@@ -156,11 +187,13 @@ characters don't block typing.
 1. ~~Text box, OFL fonts, paper, jitter engine, PNG/PDF export~~ (done).
 2. ~~PDF and Word import, paper templates, pens with real nibs, human corrections, scan
    and photo finishes~~ (done).
-3. Rich text editor (Tiptap): tables, images and maths (KaTeX).
-4. An in-app builder that turns a scan of your own handwriting into a font.
-5. B2B API: headless rendering with the same engine, CSV batch personalisation, and
+3. ~~Your own handwriting written on screen; diagrams and equations traced and drawn by
+   hand; letters that never repeat~~ (done).
+4. Rich text editor (Tiptap): tables, and typed maths (KaTeX) laid out as handwriting.
+5. Your handwriting from a photo of a filled-in template, so real ink comes with it.
+6. B2B API: headless rendering with the same engine, CSV batch personalisation, and
    print-ready PDFs (bleed, trim box, PDF/X).
-6. Neural "your handwriting from one sample" (One-DM / DiffusionPen) as a GPU job whose
+7. Neural "your handwriting from one sample" (One-DM / DiffusionPen) as a GPU job whose
    word images slot into this layout engine.
 
 ## Fonts and licensing
@@ -172,4 +205,5 @@ which ships with the app. If you add fonts, check that the licence allows web-se
 use. Many "free" fonts do not.
 
 PDF reading uses [pdf.js](https://mozilla.github.io/pdf.js/) (Apache 2.0), which runs in a
-worker in the browser.
+worker in the browser. Letter outlines are read with [opentype.js](https://opentype.js.org)
+(MIT).

@@ -182,3 +182,30 @@ describe('roomAround and growToInk', () => {
     expect(grown.y).toBeGreaterThanOrEqual(100 + BODY * 0.35);
   });
 });
+
+describe('labels standing just outside a figure', () => {
+  const line = (text: string, x0: number, x1: number, y: number, size = 10): Line => ({ text, x0, x1, y, size, column: 0, math: 0 });
+
+  it('takes a short label just above the drawing into it', () => {
+    const box = { x: 100, y: 200, width: 200, height: 100 };
+    const lines = [line('2 ATP', 180, 215, 190), line('This is the paragraph after the figure, which runs on.', 60, 540, 360)];
+    const { figures, consumed } = absorbText([box], lines, 10, 480);
+    expect(consumed.has(lines[0])).toBe(true);
+    expect(consumed.has(lines[1])).toBe(false);
+    expect(figures[0].box.y).toBeLessThan(190);
+  });
+
+  it('takes the name of an axis standing beside it', () => {
+    const box = { x: 120, y: 200, width: 200, height: 100 };
+    const lines = [line('ATP', 95, 112, 230)];
+    const { consumed } = absorbText([box], lines, 10, 480);
+    expect(consumed.has(lines[0])).toBe(true);
+  });
+
+  it('leaves the end of a sentence above a figure where it is', () => {
+    const box = { x: 100, y: 200, width: 200, height: 100 };
+    const lines = [line('rather than all at once.', 150, 260, 188)];
+    const { consumed } = absorbText([box], lines, 10, 480);
+    expect(consumed.has(lines[0])).toBe(false);
+  });
+});

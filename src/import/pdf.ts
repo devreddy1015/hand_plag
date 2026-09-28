@@ -12,8 +12,10 @@
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFPageProxy, TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { Sketch, SketchLabel } from '../engine';
 import { absorbText, findFigureBoxes, growToInk, roomAround, type Box } from './figures';
-import { findMathBlocks, isMathFont } from './math';
+import { findMathBlocks, isDrawingFont, isMathFont } from './math';
+import { looksLikeLineArt, luminance, vectorize } from './vectorize';
 import { buildLines, reconstruct, DEFAULT_PDF_OPTIONS, type Line, type PageFigure, type PageLines, type PdfOptions, type TextRun } from './reflow';
 import type { ImportedImage, Importer } from './shared';
 
@@ -21,15 +23,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export type { PdfOptions } from './reflow';
 
-/** Pages are rasterised at this resolution to find and cut out figures. */
-const FIGURE_DPI = 144;
+/**
+ * Pages are rasterised at this resolution to find, cut out and trace figures:
+ * fine enough that a hairline still comes out as a line to follow.
+ */
+const FIGURE_DPI = 192;
 const PX_PER_PT = FIGURE_DPI / 72;
 /** Nothing smaller than this (about 14 mm) counts as a figure. */
 const MIN_FIGURE_MM = 14;
 /** Widest a cut-out figure is kept: enough for print, small enough to hold. */
 const MAX_FIGURE_PX = 1400;
 /** Grid cell for the connected-block search, in rendered pixels. */
-const CELL = 8;
+const CELL = 10;
 /** Below this luminance a pixel counts as drawn rather than paper. */
 const INK_LEVEL = 186;
 
@@ -46,12 +51,15 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
       const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale: 1 });
       const content = await page.getTextContent();
-      const runs = opts.diagrams ? await withMathFonts(page, content.items as TextItem[]) : (content.items as TextRun[]);
+      const all = await withFontKinds(page, content.items as TextItem[]);
+      // Arrowheads and big brackets set in drawing fonts are part of a
+      // picture, not words to write.
+      const runs = all.filter((run) => !run.drawing);
       const lines = buildLines(runs, viewport.height, viewport.width);
       const entry: PageLines = { index: i - 1, width: viewport.width, height: viewport.height, lines };
       if (opts.diagrams) {
         try {
-          entry.figures = await extractFigures(page, entry, images);
+          entry.figures = await extractFigures(page, entry, runs, images);
         } catch (err) {
           // A figure that cannot be cut out is no reason to lose the text.
           console.warn('Could not read the diagrams on page', i, err);
@@ -80,17 +88,23 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
   }
 };
 
+/** A run of text, and what kind of font it is set in. */
+interface KindedRun extends TextRun {
+  /** Set in a font that only draws (arrowheads, big brackets): part of a picture. */
+  drawing: boolean;
+}
+
 /**
- * Mark the runs set in a mathematics font.
+ * Mark the runs set in a mathematics font, or a font used only for drawing.
  *
  * pdf.js reports only a generic family for each run ("sans-serif"), but the
  * real name of the embedded font is on the page once its operator list has
- * been parsed, and that name says plainly whether it is a maths font.
+ * been parsed, and that name says plainly what the font is for.
  */
-async function withMathFonts(page: PDFPageProxy, items: TextItem[]): Promise<TextRun[]> {
+async function withFontKinds(page: PDFPageProxy, items: TextItem[]): Promise<KindedRun[]> {
   await page.getOperatorList();
-  const known = new Map<string, boolean>();
-  const mathFont = (id: string): boolean => {
+  const known = new Map<string, { math: boolean; drawing: boolean }>();
+  const kind = (id: string) => {
     let answer = known.get(id);
     if (answer === undefined) {
       let name: string | undefined;
@@ -100,20 +114,21 @@ async function withMathFonts(page: PDFPageProxy, items: TextItem[]): Promise<Tex
       } catch {
         name = undefined;
       }
-      answer = isMathFont(name);
+      answer = { math: isMathFont(name), drawing: isDrawingFont(name) };
       known.set(id, answer);
     }
     return answer;
   };
-  return items.map((item) => ({ ...item, math: mathFont(item.fontName) }));
+  return items.map((item) => ({ ...item, ...kind(item.fontName) }));
 }
 
 /**
  * Rasterise a page that draws something, find the blocks of drawing that are
- * not text, and cut each one out as a picture. Displayed equations are cut out
- * the same way: they are drawings of mathematics, not sentences.
+ * not text, and cut each one out: as a picture, and traced into the lines and
+ * words a person would copy. Displayed equations are cut out the same way:
+ * they are drawings of mathematics, not sentences.
  */
-async function extractFigures(page: PDFPageProxy, entry: PageLines, images: ImportedImage[]): Promise<PageFigure[]> {
+async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRun[], images: ImportedImage[]): Promise<PageFigure[]> {
   const bodySizeFirst = bodySizeOf(entry.lines);
   const maths = findMathBlocks(entry.lines, {
     bodyLeft: leftOf(entry.lines),
@@ -139,10 +154,18 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, images: Impo
   const cols = Math.ceil(width / CELL);
   const rows = Math.ceil(height / CELL);
   const grid = drawnCells(ctx.getImageData(0, 0, width, height).data, width, height, cols, rows);
-  maskText(grid, cols, rows, entry.lines, bodySize);
+  const placed = runs.map((run) => runBox(run, entry.height)).filter((b): b is RunBox => b !== null);
+  maskText(grid, cols, rows, placed);
 
   const minSize = MIN_FIGURE_MM * (FIGURE_DPI / 25.4);
-  const boxesPx = findFigureBoxes(grid, cols, rows, { cell: CELL, pageWidth: width, pageHeight: height, minSize, spread: 3 });
+  const boxesPx = findFigureBoxes(grid, cols, rows, {
+    cell: CELL,
+    pageWidth: width,
+    pageHeight: height,
+    minSize,
+    spread: 3,
+    rowGap: 22 * (FIGURE_DPI / 25.4),
+  });
 
   const inPoints = boxesPx.map((b) => ({
     x: b.x / PX_PER_PT,
@@ -170,17 +193,111 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, images: Impo
   const out: PageFigure[] = [];
   all.forEach((figure, n) => {
     const id = `pdf-${entry.index + 1}-${n + 1}`;
-    const picture = cutOut(canvas, figure.box, id, figure.kind === 'math' ? 1 : 5);
+    const pad = figure.kind === 'math' ? 2 : 6;
+    const crop = cropOf(canvas, figure.box, pad);
+    if (!crop) return;
+    const picture = cutOut(canvas, crop, id);
     if (!picture) return;
     picture.kind = figure.kind;
     picture.pointWidth = figure.box.width;
     picture.sourceSize = bodySize;
+    const labels = placed.filter((run) => writable(run.text) && insideCrop(run, crop));
+    const sketch = traceCrop(ctx, crop, labels);
+    if (sketch) picture.sketch = sketch;
+    else if (figure.kind === 'figure') picture.kind = 'photo';
     images.push(picture);
     out.push({ id, top: figure.box.y, bottom: figure.box.y + figure.box.height, caption: figure.caption });
   });
 
   release(canvas);
   return out;
+}
+
+/** A run of text as a box on the rendered page, in pixels. */
+interface RunBox {
+  text: string;
+  x: number;
+  /** Baseline. */
+  y: number;
+  width: number;
+  size: number;
+}
+
+function runBox(run: TextRun, pageHeight: number): RunBox | null {
+  const t = run.transform;
+  if (!t || t.length < 6 || !run.str || run.str.trim() === '') return null;
+  // Text on its side is left in the picture, to be traced with it.
+  if (Math.abs(t[1]) > Math.abs(t[0]) * 0.35 + 0.01) return null;
+  const size = Math.max(Math.hypot(t[2], t[3]), run.height || 0) || 10;
+  return {
+    text: run.str.trim(),
+    x: t[4] * PX_PER_PT,
+    y: (pageHeight - t[5]) * PX_PER_PT,
+    width: Math.max(1, run.width * PX_PER_PT),
+    size: size * PX_PER_PT,
+  };
+}
+
+/** Can this be written out in a hand? Private-use glyphs and the like cannot. */
+function writable(text: string): boolean {
+  return text !== '' && !/[\ue000-\uf8ff\ufffd\u0000-\u001f]/.test(text);
+}
+
+interface Crop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function cropOf(page: HTMLCanvasElement, box: Box, pad: number): Crop | null {
+  const x = Math.max(0, Math.floor(box.x * PX_PER_PT) - pad);
+  const y = Math.max(0, Math.floor(box.y * PX_PER_PT) - pad);
+  const w = Math.min(page.width - x, Math.ceil(box.width * PX_PER_PT) + pad * 2);
+  const h = Math.min(page.height - y, Math.ceil(box.height * PX_PER_PT) + pad * 2);
+  return w < 8 || h < 8 ? null : { x, y, w, h };
+}
+
+function insideCrop(run: RunBox, crop: Crop): boolean {
+  const cx = run.x + run.width / 2;
+  const cy = run.y - run.size * 0.3;
+  return cx > crop.x && cx < crop.x + crop.w && cy > crop.y && cy < crop.y + crop.h;
+}
+
+/**
+ * Trace a cut-out figure into pen paths, leaving out the words: those are
+ * written in the hand instead, where they stood.
+ */
+function traceCrop(ctx: CanvasRenderingContext2D, crop: Crop, labels: RunBox[]): Sketch | null {
+  const data = ctx.getImageData(crop.x, crop.y, crop.w, crop.h).data;
+  const lum = luminance(data);
+  if (!looksLikeLineArt(lum)) return null;
+  const ignore = new Uint8Array(crop.w * crop.h);
+  for (const run of labels) {
+    const pad = Math.max(1, run.size * 0.06);
+    const x0 = Math.max(0, Math.floor(run.x - crop.x - pad));
+    const x1 = Math.min(crop.w - 1, Math.ceil(run.x + run.width - crop.x + pad));
+    const y0 = Math.max(0, Math.floor(run.y - run.size * 0.82 - crop.y - pad));
+    const y1 = Math.min(crop.h - 1, Math.ceil(run.y + run.size * 0.26 - crop.y + pad));
+    for (let y = y0; y <= y1; y++) ignore.fill(1, y * crop.w + x0, y * crop.w + x1 + 1);
+  }
+  const traced = vectorize(lum, crop.w, crop.h, ignore, {}, data);
+  if (!traced) return null;
+  const k = 1 / crop.w;
+  const sketchLabels: SketchLabel[] = labels.map((run) => ({
+    text: run.text,
+    x: (run.x - crop.x) * k,
+    y: (run.y - crop.y) * k,
+    w: run.width * k,
+    size: run.size * k,
+  }));
+  return {
+    aspect: crop.w / crop.h,
+    paths: traced.paths.map((p) => ({ pts: p.pts.map((v) => v * k), weight: p.weight, closed: p.closed })),
+    fills: traced.fills.map((f) => ({ pts: f.pts.map((v) => v * k), area: f.area * k * k, tone: f.tone, group: f.group })),
+    labels: sketchLabels,
+    lineWidth: traced.lineWidth * k,
+  };
 }
 
 /** Asks whether anything is drawn in a strip of the rendered page. */
@@ -272,16 +389,18 @@ function drawnCells(data: Uint8ClampedArray, width: number, height: number, cols
   return grid;
 }
 
-/** Clear the cells the running text covers: words are not diagrams. */
-function maskText(grid: Uint8Array, cols: number, rows: number, lines: Line[], bodySize: number): void {
-  const pad = Math.max(1.5, bodySize * 0.25) * PX_PER_PT;
-  for (const line of lines) {
-    const x0 = (line.x0 * PX_PER_PT - pad) / CELL;
-    const x1 = (line.x1 * PX_PER_PT + pad) / CELL;
-    const y0 = ((line.y - line.size) * PX_PER_PT - pad) / CELL;
-    const y1 = ((line.y + line.size * 0.35) * PX_PER_PT + pad) / CELL;
-    for (let r = Math.max(0, Math.floor(y0)); r <= Math.min(rows - 1, Math.ceil(y1)); r++) {
-      for (let c = Math.max(0, Math.floor(x0)); c <= Math.min(cols - 1, Math.ceil(x1)); c++) {
+/** Clear the cells each run of text covers: words are not diagrams. */
+function maskText(grid: Uint8Array, cols: number, rows: number, runs: RunBox[]): void {
+  for (const run of runs) {
+    // Tight to the run itself, so a line passing close by — the shaft of an
+    // arrow between two labelled boxes — is not wiped out with it.
+    const pad = Math.max(1, run.size * 0.08);
+    const x0 = (run.x - pad) / CELL;
+    const x1 = (run.x + run.width + pad) / CELL;
+    const y0 = (run.y - run.size * 0.8 - pad) / CELL;
+    const y1 = (run.y + run.size * 0.25 + pad) / CELL;
+    for (let r = Math.max(0, Math.floor(y0)); r <= Math.min(rows - 1, Math.floor(y1)); r++) {
+      for (let c = Math.max(0, Math.floor(x0)); c <= Math.min(cols - 1, Math.floor(x1)); c++) {
         grid[r * cols + c] = 0;
       }
     }
@@ -302,13 +421,8 @@ function bodySizeOf(lines: Line[]): number {
 }
 
 /** Copy one figure out of the rendered page, at a sensible size. */
-function cutOut(page: HTMLCanvasElement, box: Box, id: string, pad = 5): ImportedImage | null {
-  const sx = Math.max(0, Math.floor(box.x * PX_PER_PT) - pad);
-  const sy = Math.max(0, Math.floor(box.y * PX_PER_PT) - pad);
-  const sw = Math.min(page.width - sx, Math.ceil(box.width * PX_PER_PT) + pad * 2);
-  const sh = Math.min(page.height - sy, Math.ceil(box.height * PX_PER_PT) + pad * 2);
-  if (sw < 8 || sh < 8) return null;
-
+function cutOut(page: HTMLCanvasElement, crop: Crop, id: string): ImportedImage | null {
+  const { x: sx, y: sy, w: sw, h: sh } = crop;
   const shrink = Math.min(1, MAX_FIGURE_PX / sw);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sw * shrink));

@@ -4,9 +4,11 @@ import {
   applyTemplate,
   layoutDocument,
   pageGeometry,
+  type ImageInfo,
   type LayoutOptions,
   type PageGeometry,
   type Settings,
+  type Sketch,
 } from '../src/engine';
 
 /** Monospace-ish fake font: letters 10u wide, spaces 5u. */
@@ -220,6 +222,22 @@ describe('diagrams', () => {
     expect(image.y + image.height).toBeLessThanOrEqual(doc.geometry.height);
   });
 
+  it('writes on when a figure will not fit, and draws it at the top of the next page', () => {
+    const before = Array.from({ length: 22 }, (_, i) => `Line ${i + 1} before.`).join('\n');
+    const after = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} after.`).join('\n');
+    const doc = layout(`${before}\n![Figure 1](fig-1)\n${after}`, { markdown: true }, picture(400, 600));
+    // The page is filled with the text that came after the figure...
+    const firstPage = doc.pages[0].glyphs.map((g) => g.text).join('');
+    expect(firstPage).toContain('Line1after.');
+    // ...and the figure opens the next page, with its caption under it.
+    expect(doc.pages[0].images).toHaveLength(0);
+    const image = doc.pages[1].images[0];
+    expect(image).toBeDefined();
+    expect(image.y).toBeLessThan(doc.geometry.height * 0.25);
+    const caption = doc.pages[1].glyphs.filter((g) => g.y > image.y + image.height);
+    expect(caption.map((g) => g.text).join('')).toContain('Figure1');
+  });
+
   it('writes the caption under the figure, smaller and centred', () => {
     const doc = layout('![Figure 1. The cycle](fig-1)', { markdown: true, messiness: 0 }, picture());
     const image = page(doc).images[0];
@@ -397,5 +415,112 @@ describe('connected fonts', () => {
       return sum / g.length;
     };
     expect(spread(joined)).toBeLessThan(spread(loose) * 0.6);
+  });
+});
+
+describe('diagrams copied out by hand', () => {
+  const sketch: Sketch = {
+    aspect: 2,
+    paths: [
+      { pts: [0.1, 0.1, 0.9, 0.1, 0.9, 0.4, 0.1, 0.4], weight: 1, closed: true },
+      { pts: [0.5, 0.45], weight: 1 },
+    ],
+    fills: [
+      { pts: [0.2, 0.2, 0.4, 0.2, 0.4, 0.38, 0.2, 0.38], area: 0.036, tone: 0.7, group: 0 },
+      { pts: [0.6, 0.2, 0.8, 0.2, 0.8, 0.38, 0.6, 0.38], area: 0.036, tone: 0.3, group: 1 },
+    ],
+    labels: [{ text: 'Glucose', x: 0.4, y: 0.3, w: 0.2, size: 0.04 }],
+    lineWidth: 0.004,
+  };
+  const traced = (info: Partial<ImageInfo> = {}): LayoutOptions => ({ imageSize: () => ({ width: 400, height: 200, sketch, ...info }) });
+
+  it('draws the lines with the pen and writes the labels in the hand', () => {
+    const doc = layout('![](fig-1)', { markdown: true }, traced());
+    const page0 = doc.pages[0];
+    // Nothing is pasted: the whole figure is ink.
+    expect(page0.images).toHaveLength(0);
+    expect(page0.strokes.length).toBeGreaterThan(6);
+    expect(page0.glyphs.map((g) => g.text).join('')).toBe('Glucose');
+    // Every letter of the label is a letter of the hand: bent, and seeded.
+    for (const g of page0.glyphs) {
+      expect(g.seed).toBeDefined();
+      expect(g.warp).toBeGreaterThan(0);
+    }
+  });
+
+  it('shades each colour of fill its own way', () => {
+    const doc = layout('![](fig-1)', { markdown: true }, traced());
+    const hatchAngles = new Set(
+      doc.pages[0].strokes
+        .filter((st) => st.points.length === 3)
+        .map((st) => Math.round((Math.atan2(st.points[2].y - st.points[0].y, st.points[2].x - st.points[0].x) * 180) / Math.PI / 30)),
+    );
+    expect(hatchAngles.size).toBeGreaterThan(1);
+  });
+
+  it('writes the labels of an equation at the size of the hand', () => {
+    const doc = layout('![](eq-1)', { markdown: true }, traced({ kind: 'math', widthUnits: 300 }));
+    for (const g of doc.pages[0].glyphs) expect(g.scaleY).toBeGreaterThan(0.3);
+  });
+
+  it('sticks a photograph on as it is', () => {
+    const doc = layout('![](photo-1)', { markdown: true }, traced({ kind: 'photo' }));
+    expect(doc.pages[0].images).toHaveLength(1);
+    expect(doc.pages[0].images[0].photo).toBe(true);
+    expect(doc.pages[0].glyphs).toHaveLength(0);
+  });
+
+  it('pastes the picture instead when diagrams are to be stuck on', () => {
+    const doc = layout('![](fig-1)', { markdown: true, diagramStyle: 'pasted' }, traced());
+    expect(doc.pages[0].images).toHaveLength(1);
+    expect(doc.pages[0].glyphs).toHaveLength(0);
+  });
+});
+
+describe('what gets written', () => {
+  it('never runs two words together', () => {
+    const text = lorem(400);
+    const doc = layout(text, { messiness: 1, jitter: { ...DEFAULT_SETTINGS.jitter, spacing: 2 } });
+    const words = text.split(' ');
+    const glyphs = doc.pages.flatMap((p) => p.glyphs);
+    let at = 0;
+    let checked = 0;
+    for (let w = 0; w + 1 < words.length; w++) {
+      const last = glyphs[at + words[w].length - 1];
+      const next = glyphs[at + words[w].length];
+      at += words[w].length;
+      // Only pairs on the same line: a word that starts the next line has no gap to measure.
+      if (!next || Math.abs(next.y - last.y) > 8 || next.x < last.x) continue;
+      // Letters are 10 wide and a space is 5 in the test font.
+      expect(next.x - (last.x + 10 * last.scaleX)).toBeGreaterThan(5 * 0.6);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(200);
+  });
+
+  it('bends every letter, and gives each copy its own seed', () => {
+    const doc = layout('eeeeeeeeee');
+    const seeds = new Set(doc.pages[0].glyphs.map((g) => g.seed));
+    expect(seeds.size).toBe(10);
+    for (const g of doc.pages[0].glyphs) expect(g.warp).toBeGreaterThan(0);
+  });
+
+  it('does not bend letters at messiness zero', () => {
+    const doc = layout('eeee', { messiness: 0 });
+    for (const g of doc.pages[0].glyphs) expect(g.warp).toBe(0);
+  });
+
+  it('writes a stand-in for a character the hand has no letter for', () => {
+    const doc = layout('say “hi”…', {}, { substitute: (u) => ({ '“': '"', '”': '"', '…': '...' })[u] ?? u });
+    expect(drawn(doc)).toBe('say"hi"...');
+  });
+
+  it('raises superscripts and drops subscripts, smaller', () => {
+    const doc = layout('x^2 H_2', { markdown: true, messiness: 0 });
+    const [x, two, h, sub] = doc.pages[0].glyphs;
+    expect(two.y).toBeLessThan(x.y - FONT_PX * 0.2);
+    expect(two.scaleY).toBeLessThan(x.scaleY);
+    expect(sub.y).toBeGreaterThan(h.y);
+    expect(sub.scaleY).toBeLessThan(h.scaleY);
   });
 });

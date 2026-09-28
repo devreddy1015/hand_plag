@@ -130,6 +130,11 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
   const flush = () => {
     if (bucket.length === 0) return;
     bucket.sort((a, b) => a.x - b.x);
+    // The line's own type: the run with the most characters in it. Anything
+    // markedly smaller and off its baseline is a superscript or subscript —
+    // a footnote mark, a power, the 2 of CO2 — and is kept as one.
+    let main = bucket[0];
+    for (const run of bucket) if (run.str.trim().length > main.str.trim().length) main = run;
     let text = '';
     let cursor = -Infinity;
     let size = 0;
@@ -137,10 +142,15 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
     let allChars = 0;
     for (const run of bucket) {
       const gap = run.x - cursor;
-      if (text !== '' && gap > run.size * 0.18 && !/\s$/.test(text) && !/^\s/.test(run.str)) text += ' ';
-      text += run.str;
+      const script = run !== main && run.size < main.size * 0.86 && Math.abs(run.y - main.y) > main.size * 0.1 && run.str.trim() !== '';
+      if (script) {
+        text += `${run.y < main.y ? '^' : '_'}{${run.str.trim()}}`;
+      } else {
+        if (text !== '' && gap > run.size * 0.18 && !/\s$/.test(text) && !/^\s/.test(run.str)) text += ' ';
+        text += run.str;
+      }
       cursor = run.x + run.width;
-      size = Math.max(size, run.size);
+      size = Math.max(size, script ? 0 : run.size);
       const length = run.str.trim().length;
       allChars += length;
       if (run.math) mathChars += length;
@@ -148,7 +158,8 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
     const trimmed = cleanText(text);
     if (trimmed !== '') {
       lines.push({
-        y: bucket.reduce((s, r) => s + r.y, 0) / bucket.length,
+        // The baseline of the line's own type, not pulled about by its scripts.
+        y: main.y,
         x0: bucket[0].x,
         x1: cursor,
         size,
@@ -160,12 +171,17 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
     bucket = [];
   };
 
+  // A line is measured from its own type, not from whatever run happened to
+  // come first: that may be a superscript sitting above it.
+  let bucketSize = 0;
   for (const run of sorted) {
     if (bucket.length > 0 && Math.abs(run.y - bucketY) > tolerance) {
       flush();
       bucketY = run.y;
-    } else if (bucket.length === 0) {
+      bucketSize = run.size;
+    } else if (bucket.length === 0 || run.size > bucketSize * 1.1) {
       bucketY = run.y;
+      bucketSize = run.size;
     }
     bucket.push(run);
   }
@@ -232,7 +248,6 @@ function clampBin(v: number): number {
 
 /** Drop the lines a publisher repeats at the top or bottom of every page. */
 export function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
-  if (pages.length < 3) return;
   const counts = new Map<string, number>();
   const key = (line: Line) => line.text.replace(/\d+/g, '#').trim().toLowerCase();
   for (const page of pages) {
@@ -245,8 +260,11 @@ export function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
   }
+  // Repetition only means something across a few pages; a bare page number
+  // is recognisable on its own.
   const threshold = Math.max(3, Math.floor(pages.length * 0.5));
-  const repeated = new Set([...counts.entries()].filter(([, n]) => n >= threshold).map(([k]) => k));
+  const repeated =
+    pages.length < 3 ? new Set<string>() : new Set([...counts.entries()].filter(([, n]) => n >= threshold).map(([k]) => k));
   let removed = 0;
   for (const page of pages) {
     page.lines = page.lines.filter((line) => {

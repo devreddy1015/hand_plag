@@ -1,7 +1,8 @@
-import { EM_BOLD, EM_ITALIC, EM_UNDERLINE, parseBlocks, type Block } from './markup';
+import { EM_BOLD, EM_ITALIC, EM_SUB, EM_SUP, EM_UNDERLINE, parseBlocks, type Block } from './markup';
 import { clamp, createDrift, createNoise1D, gaussian, hashInts, hashString, mulberry32, smoothstep, type Rng } from './random';
-import { gapAfterFactor, gapBeforeFactor, hyphenPoint, isRtlParagraph, tokenize, type Token } from './segment';
-import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, Settings, TextArea } from './types';
+import { gapAfterFactor, gapBeforeFactor, graphemes, hyphenPoint, isRtlParagraph, tokenize, type Token } from './segment';
+import { sketchStrokes } from './sketch';
+import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, PlacedImage, Settings, Sketch, SketchLabel, TextArea } from './types';
 
 export { PAGE_BREAK } from './markup';
 
@@ -40,6 +41,15 @@ const BASE = {
   driftSpacing: 0.06,
   driftBaseline: 0.05, // × line spacing, unruled paper only
 };
+
+/** Layout units per millimetre. */
+const MM_UNITS = 96 / 25.4;
+
+/** A pen line (diagram, underline) as a fraction of the font size. */
+const LINE_WEIGHT = 0.05;
+
+/** x-height of printed type, as a fraction of its size: close enough for every common face. */
+const PRINT_X = 0.45;
 
 /** How far the written baseline sits above the printed rule. */
 const BASELINE_LIFT = 0.06; // × line spacing
@@ -84,6 +94,9 @@ interface Unit {
   shade: number;
   /** Emphasis bits from the markup. */
   em: number;
+  /** Which habitual form of the letter, and the seed for this copy's bend. */
+  variant: number;
+  seed: number;
 }
 
 interface Word {
@@ -134,6 +147,19 @@ interface Line {
   fontPx: number;
 }
 
+/** What the layout needs to know about a picture to make room for it and draw it. */
+export interface ImageInfo {
+  /** Natural size, in any units: only the shape is used. */
+  width: number;
+  height: number;
+  /** Width to draw it at, in layout units, when it has one of its own (an equation). */
+  widthUnits?: number;
+  /** The diagram as lines and words, when it can be copied out by hand. */
+  sketch?: Sketch;
+  /** An equation is written at the size of the hand; a photograph is never traced. */
+  kind?: 'figure' | 'math' | 'photo';
+}
+
 export interface LayoutOptions {
   /**
    * The font joins its letters (connected cursive). Per-letter jitter is
@@ -149,7 +175,13 @@ export interface LayoutOptions {
    * Natural size of a diagram, in whatever units, so the layout can work out
    * its shape. Returning null leaves room for a figure nobody has drawn yet.
    */
-  imageSize?: (src: string) => { width: number; height: number; widthUnits?: number } | null;
+  imageSize?: (src: string) => ImageInfo | null;
+  /**
+   * What to write instead of a character the hand cannot draw: curly quotes
+   * as straight ones, an ellipsis as three dots. Returning the unit itself
+   * keeps it.
+   */
+  substitute?: (unit: string) => string;
 }
 
 /**
@@ -186,9 +218,13 @@ export function layoutDocument(
     wordSlant: BASE.wordSlantDeg * m * w.word,
     wordScale: BASE.wordScale * m * w.word,
     ink: (PEN_INK_VARIATION[s.pen] ?? 0.2) * clamp(w.ink, 0, 2),
+    // Cursive letters are bent less, so the strokes that join them still meet.
+    shape: m * clamp(w.shape ?? 1, 0, 2) * (options.connected ? 0.75 : 1),
   };
   // At messiness 0 the hand is a machine: no drift at all.
   const driftAmp = clamp(w.drift, 0, 3) * m * 0.75;
+  /** The hand's x-height as a fraction of its font size, to size labels against print. */
+  const handX = clamp((s.letterSize * spacing) / fontPx, 0.2, 0.8);
 
   // ------------------------------------------------------------ measurement
 
@@ -223,6 +259,7 @@ export function layoutDocument(
   };
 
   const unitScale = options.unitScale ?? (() => 1);
+  const substitute = options.substitute ?? ((unit: string) => unit);
   const baseSpaceWidth = Math.max(width(' '), fontPx * 0.2) * s.wordSpacing;
 
   // ------------------------------------------------------------ word building
@@ -259,17 +296,33 @@ export function layoutDocument(
         pBaseline: 0,
         shade: shadeOf(),
         em,
+        variant: 0,
+        seed: seedFrom(rng),
       });
     } else {
-      const n = token.units.length;
+      // What is drawn can differ from what was typed: a character the hand
+      // has no letter for is written the way a person would write it.
+      const letters: string[] = [];
+      const bitsOf: number[] = [];
       let offset = token.offset;
-      for (let i = 0; i < n; i++) {
-        const c = token.units[i];
-        const next = i + 1 < n ? token.units[i + 1] : undefined;
+      for (const typed of token.units) {
         const bits = emAt(offset);
+        offset += typed.length;
+        const written = substitute(typed);
+        const parts = written === typed ? [typed] : graphemes(written);
+        for (const part of parts) {
+          letters.push(part);
+          bitsOf.push(bits);
+        }
+      }
+      const n = letters.length;
+      for (let i = 0; i < n; i++) {
+        const c = letters[i];
+        const next = i + 1 < n ? letters[i + 1] : undefined;
+        const bits = bitsOf[i];
         em |= bits;
-        offset += c.length;
-        const persona = personaFor(c, Math.floor(rng() * PERSONA_VARIANTS));
+        const variant = Math.floor(rng() * PERSONA_VARIANTS);
+        const persona = personaFor(c, variant);
         const size = sizeRatio * emScale(bits) * wordScale;
         const sy = Math.max(0.7, 1 + gaussian(rng) * amp.scale + persona.scale) * unitScale(c) * size;
         const sx = sy * (1 + gaussian(rng) * amp.scale * 0.3);
@@ -291,14 +344,19 @@ export function layoutDocument(
           pBaseline: persona.baseline,
           shade: shadeOf(),
           em: bits,
+          variant,
+          seed: seedFrom(rng),
         });
       }
     }
 
     const spaceWidth = baseSpaceWidth * sizeRatio;
+    // A gap between words varies a lot but never closes up: two words run
+    // together is the one thing a writer does not do. Spread it on a log
+    // scale, so it is as likely to be half again as wide as two-thirds.
     const gap =
       token.spacesBefore > 0
-        ? Math.max(spaceWidth * 0.4, token.spacesBefore * spaceWidth * (1 + gaussian(rng) * amp.wordGap))
+        ? token.spacesBefore * spaceWidth * clamp(Math.exp(gaussian(rng) * amp.wordGap), 0.68, 1.9)
         : Math.max(0, letterSpacing + gaussian(rng) * amp.letterGap);
 
     const word: Word = {
@@ -320,7 +378,13 @@ export function layoutDocument(
   const addFalseStart = (word: Word, rng: Rng): void => {
     const count = Math.min(word.units.length - 1, 1 + Math.floor(rng() * 3));
     if (count < 1) return;
-    word.falseStart = word.units.slice(0, count).map((u) => ({ ...u, shade: clamp(u.shade + 0.1, -1, 1) }));
+    // Written again from scratch, so the letters come out a little differently.
+    word.falseStart = word.units.slice(0, count).map((u) => ({
+      ...u,
+      shade: clamp(u.shade + 0.1, -1, 1),
+      variant: Math.floor(rng() * PERSONA_VARIANTS),
+      seed: seedFrom(rng),
+    }));
     word.width = wordWidth(word.falseStart) + baseSpaceWidth * 0.55 + word.width;
   };
 
@@ -359,7 +423,45 @@ export function layoutDocument(
     pageProgress: number;
   }
 
+  /**
+   * Diagrams that did not fit where they came, waiting for the top of the
+   * next column. The writing carries on underneath meanwhile, as it does on
+   * paper: nobody leaves half a page empty because a figure would not fit.
+   */
+  const deferred: [Block, number][] = [];
+  let replaying = false;
+  let writeBlock: (block: Block, bi: number) => void = () => undefined;
+
+  const flushDeferred = (): void => {
+    if (replaying || deferred.length === 0) return;
+    replaying = true;
+    for (const [block, bi] of deferred.splice(0)) writeBlock(block, bi);
+    replaying = false;
+  };
+
+  const nextArea = (): boolean => {
+    const geom = geomFor(pi);
+    li = 0;
+    ai++;
+    if (ai >= geom.areas.length) {
+      ai = 0;
+      pi++;
+      linesOnPage = 0;
+      if (pi >= MAX_PAGES) return false;
+    }
+    return true;
+  };
+
   const takeSlot = (count: number): Slot | null => {
+    if (!replaying && deferred.length > 0) {
+      const geom = geomFor(pi);
+      const area = geom.areas[Math.min(ai, geom.areas.length - 1)];
+      // About to turn over: the waiting diagrams go at the top of the new column.
+      if (li + count > area.lines.length) {
+        if (!nextArea()) return null;
+        flushDeferred();
+      }
+    }
     for (let guard = 0; guard < MAX_PAGES * 4; guard++) {
       const geom = geomFor(pi);
       const area = geom.areas[Math.min(ai, geom.areas.length - 1)];
@@ -378,14 +480,7 @@ export function layoutDocument(
         return slot;
       }
       // This area is full: move to the next column, then the next page.
-      li = 0;
-      ai++;
-      if (ai >= geom.areas.length) {
-        ai = 0;
-        pi++;
-        linesOnPage = 0;
-        if (pi >= MAX_PAGES) return null;
-      }
+      if (!nextArea()) return null;
     }
     return null;
   };
@@ -469,6 +564,9 @@ export function layoutDocument(
         const wave = baselineNoise(rel / (spacing * 2.5) + lineNoise) * amp.wave;
         let y = baseY + rel * tanSlope + wave + u.nBaseline * amp.baseline * fatigue + u.pBaseline + word.baseline;
         if (above) y -= spacing * 0.62;
+        // Raised to about the height of a small letter, or dropped below the line.
+        if (u.em & EM_SUP) y -= line.fontPx * 0.36 * extra;
+        else if (u.em & EM_SUB) y += line.fontPx * 0.13 * extra;
         const slantDeg =
           s.slant +
           slantDrift +
@@ -490,6 +588,10 @@ export function layoutDocument(
           opacity: clamp(1 - amp.ink * (0.5 + 0.5 * inkNoise(flow)), 0.15, 1),
           pressure: clamp(0.5 + 0.5 * pressureNoise(flow * 0.7 + 11) + (bold ? 0.35 : 0), 0, 1),
           shade: clamp(u.shade + (bold ? 0.25 : 0), -1, 1),
+          variant: u.variant,
+          seed: u.seed,
+          // The hand grows less careful down the page, and so do the letters.
+          warp: amp.shape * (0.75 + 0.25 * fatigue),
         };
         if (rtl) glyph.rtl = true;
         page.glyphs.push(glyph);
@@ -561,17 +663,26 @@ export function layoutDocument(
    * draws in it, and carries on underneath. It is never split over two pages,
    * because `takeSlot` moves on when the run of lines does not fit.
    */
-  const placeImage = (block: Block, bi: number): void => {
+  /** How big a diagram is drawn, and how many lines of the page it takes. */
+  const imageFootprint = (block: Block) => {
     const geomNow = geomFor(pi);
     const areaNow = geomNow.areas[Math.min(ai, geomNow.areas.length - 1)];
     const column = areaNow.right - areaNow.left;
     const natural = imageSize(block.src);
     const aspect = natural && natural.width > 0 && natural.height > 0 ? natural.height / natural.width : 0.7;
+    const sketch = s.diagramStyle === 'sketch' && natural?.kind !== 'photo' ? natural?.sketch : undefined;
 
     // An equation asks to be drawn at a particular size — the size of the
     // writing around it — because that is what copying one out means. A
     // figure just takes its share of the column.
     let width = natural?.widthUnits ? Math.min(column, natural.widthUnits) : column * clamp(s.diagramScale, 0.15, 1);
+    if (sketch && natural?.kind !== 'math' && sketch.labels.length > 0) {
+      // A diagram with words in it is drawn big enough for them to be written
+      // at an ordinary size, the way a student draws a figure to fit its labels.
+      const sizes = sketch.labels.map((l) => l.size).sort((a, b) => a - b);
+      const typical = sizes[Math.floor(sizes.length / 2)];
+      if (typical > 0) width = Math.min(column, Math.max(width, (0.7 * fontPx * handX) / (PRINT_X * typical)));
+    }
     let height = width * aspect;
     // Never taller than most of a column, or it could never be placed at all.
     const maxHeight = Math.max(1, Math.floor(areaNow.lines.length * 0.85)) * spacing - spacing * 0.4;
@@ -580,7 +691,11 @@ export function layoutDocument(
       width = height / aspect;
     }
     const slots = Math.max(1, Math.ceil((height + spacing * 0.45) / spacing));
+    return { natural, sketch, width, height, slots };
+  };
 
+  const placeImage = (block: Block, bi: number): void => {
+    const { natural, sketch, width, height, slots } = imageFootprint(block);
     const slot = takeSlot(slots);
     if (!slot) {
       truncated += 1;
@@ -593,15 +708,96 @@ export function layoutDocument(
     const free = slots * spacing - spacing * 0.3 - height;
     const x = slot.area.left + (slot.area.right - slot.area.left - width) / 2 + gaussian(rng) * spacing * 0.07;
     const y = bandTop + Math.max(0, free) / 2;
-    slot.page.images.push({
-      id: block.src,
-      x,
-      y,
-      width,
-      height,
-      rotation: gaussian(rng) * 0.9 * DEG * clamp(w.rotation, 0, 2) * clamp(s.messiness * 2, 0, 2),
-    });
+    // A print stuck on sits a little crooked. A figure drawn on ruled paper is
+    // lined up with the ruling, as a writer does by eye.
+    const tilt = sketch ? 0.3 : 0.9;
+    const rotation = gaussian(rng) * tilt * DEG * clamp(w.rotation, 0, 2) * clamp(s.messiness * 2, 0, 2);
+
+    if (sketch) {
+      const placement = { x, y, width, rotation };
+      slot.page.strokes.push(
+        ...sketchStrokes(sketch, placement, {
+          rng,
+          messiness: clamp(s.messiness, 0, 1),
+          lineWidth: fontPx * LINE_WEIGHT,
+          mm: MM_UNITS,
+        }),
+      );
+      sketch.labels.forEach((label, li) => {
+        // Written at the size the hand writes, not the size it was printed.
+        const printed = label.size * width;
+        const hand = (printed * PRINT_X) / handX;
+        const em = natural?.kind === 'math' ? clamp(hand, fontPx * 0.4, fontPx * 1.3) : clamp(hand, fontPx * 0.58, fontPx * 0.95);
+        writeLabel(slot.page, label, { x, y, width, height, rotation }, em, hashInts(s.seed, 0x1abe, bi, li));
+      });
+      if (s.diagramFrame) slot.page.strokes.push(...frameStrokes(x, y, width, height, fontPx, rng));
+      return;
+    }
+
+    const image: PlacedImage = { id: block.src, x, y, width, height, rotation };
+    if (natural?.kind === 'photo') image.photo = true;
+    slot.page.images.push(image);
     if (s.diagramFrame || natural === null) slot.page.strokes.push(...frameStrokes(x, y, width, height, fontPx, rng));
+  };
+
+  /**
+   * Write one of a diagram's labels where it stood in the original: centred
+   * on the same spot, in the writer's hand, and squeezed a little if the hand
+   * runs wider than the print did.
+   */
+  const writeLabel = (
+    page: PageLayout,
+    label: SketchLabel,
+    fig: { x: number; y: number; width: number; height: number; rotation: number },
+    em: number,
+    seed: number,
+  ): void => {
+    const tokens = tokenize(label.text, false);
+    if (tokens.length === 0) return;
+    const rng = mulberry32(seed);
+    const ratio = em / fontPx;
+    const words = tokens.map((token, i) => buildWord(token, mulberry32(hashInts(seed, i, 0x1ab)), () => 0, ratio));
+    let total = 0;
+    words.forEach((word, i) => (total += (i > 0 ? word.gap : 0) + word.width));
+    const printed = label.w * fig.width;
+    const squeeze = printed > 0 && total > printed * 1.2 ? clamp((printed * 1.2) / total, 0.72, 1) : 1;
+
+    // Where the label's centre and baseline sit once the figure is turned.
+    const fcx = fig.x + fig.width / 2;
+    const fcy = fig.y + fig.height / 2;
+    const lx = fig.x + (label.x + label.w / 2) * fig.width - fcx;
+    const ly = fig.y + label.y * fig.width - fcy;
+    const cos = Math.cos(fig.rotation);
+    const sin = Math.sin(fig.rotation);
+    const cx = fcx + lx * cos - ly * sin;
+    const baseY = fcy + lx * sin + ly * cos + gaussian(rng) * amp.wordBaseline * 0.5;
+    const slope = fig.rotation + clamp(gaussian(rng), -2, 2) * amp.slope * 1.5;
+    const tanSlope = Math.tan(slope);
+    const startX = cx - (total * squeeze) / 2;
+
+    let x = startX;
+    words.forEach((word, wi) => {
+      if (wi > 0) x += word.gap * squeeze;
+      for (const u of word.units) {
+        const rel = x - startX;
+        page.glyphs.push({
+          text: u.text,
+          x,
+          y: baseY + rel * tanSlope + u.nBaseline * amp.baseline + u.pBaseline + word.baseline * 0.5,
+          rotation: slope + u.nRotation * amp.rotation + u.pRotation,
+          skew: Math.tan(clamp(s.slant + u.nSlant * amp.slantRandom + word.slant, -45, 45) * DEG) + u.pSkew,
+          scaleX: u.scaleX * squeeze,
+          scaleY: u.scaleY,
+          opacity: clamp(1 - amp.ink * (0.5 + 0.5 * inkNoise((x + seed % 997) / (fontPx * 5))), 0.15, 1),
+          pressure: clamp(0.5 + 0.5 * pressureNoise(x / (fontPx * 3.5) + 11), 0, 1),
+          shade: u.shade,
+          variant: u.variant,
+          seed: u.seed,
+          warp: amp.shape,
+        });
+        x += u.advance * squeeze;
+      }
+    });
   };
 
   // ------------------------------------------------------------ blocks
@@ -610,9 +806,19 @@ export function layoutDocument(
   const paragraphIndent = Math.max(0, s.paragraphIndent) * (96 / 25.4);
   const corrections = clamp(s.corrections, 0, 1);
 
-  blocks.forEach((block, bi) => {
+  /** A caption waits with its diagram. */
+  let captionWaits = false;
+
+  writeBlock = (block: Block, bi: number): void => {
+    const waits = captionWaits;
+    captionWaits = false;
     if (block.kind === 'pagebreak') {
       forcePageBreak();
+      flushDeferred();
+      return;
+    }
+    if (block.kind === 'caption' && waits) {
+      deferred.push([block, bi]);
       return;
     }
     if (block.kind === 'blank') {
@@ -621,7 +827,21 @@ export function layoutDocument(
       return;
     }
     if (block.kind === 'image') {
-      if (s.diagrams) placeImage(block, bi);
+      if (!s.diagrams) return;
+      if (!replaying) {
+        const geom = geomFor(pi);
+        const area = geom.areas[Math.min(ai, geom.areas.length - 1)];
+        const room = area.lines.length - li;
+        const { slots } = imageFootprint(block);
+        // Too big for what is left, but a fair amount is left: write on, and
+        // draw the figure at the top of the next column.
+        if ((slots > room && room >= 4 && slots <= area.lines.length) || deferred.length > 0) {
+          deferred.push([block, bi]);
+          captionWaits = true;
+          return;
+        }
+      }
+      placeImage(block, bi);
       return;
     }
     if (block.kind === 'divider') {
@@ -813,7 +1033,11 @@ export function layoutDocument(
       queue.push(word);
     }
     flush();
-  });
+  };
+
+  blocks.forEach((block, bi) => writeBlock(block, bi));
+  // Whatever is still waiting goes at the end.
+  flushDeferred();
 
   // ------------------------------------------------------------ page numbers
 
@@ -849,6 +1073,9 @@ export function layoutDocument(
           opacity: 1,
           pressure: 0.6,
           shade: 0.1,
+          variant: 0,
+          seed: hashInts(s.seed, 0x9a6f, i, x | 0),
+          warp: amp.shape,
         });
         x += width(ch) * sc;
       }
@@ -882,9 +1109,18 @@ export function layoutDocument(
 
 // ---------------------------------------------------------------- helpers
 
-function emScale(em: number): number {
-  return em & EM_BOLD ? 1.035 : 1;
+/** A fresh 32-bit seed drawn from a stream. */
+function seedFrom(rng: Rng): number {
+  return (rng() * 4294967296) >>> 0;
 }
+
+function emScale(em: number): number {
+  const script = em & (EM_SUP | EM_SUB) ? SCRIPT_SCALE : 1;
+  return (em & EM_BOLD ? 1.035 : 1) * script;
+}
+
+/** Superscripts and subscripts are written about two-thirds size. */
+const SCRIPT_SCALE = 0.66;
 
 function wordWidth(units: Unit[]): number {
   let total = 0;

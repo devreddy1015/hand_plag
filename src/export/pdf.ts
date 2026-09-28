@@ -15,11 +15,10 @@ const PT_PER_MM = 72 / 25.4;
  */
 export async function exportPdf(job: ExportJob): Promise<Blob> {
   const { prepared, dpi, onProgress, signal } = job;
-  const pdf = await PDFDocument.create();
-  pdf.setTitle(job.title ?? 'Handwritten document');
-  pdf.setCreator('Handscript');
-  pdf.setProducer('Handscript (pdf-lib)');
-  pdf.setCreationDate(new Date());
+  // The file says what it is called and nothing about how it was made: no
+  // creator or producer stamp, which is what a page off a scanner carries.
+  const pdf = await PDFDocument.create({ updateMetadata: false });
+  if (job.title) pdf.setTitle(job.title);
 
   const canvas = createCanvas(1, 1) as HTMLCanvasElement;
   const scale = dpi / 96;

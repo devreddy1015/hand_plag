@@ -1,4 +1,5 @@
 /** Pieces shared by the file importers. */
+import type { Sketch } from '../engine';
 
 /** A picture taken out of a document, ready to be drawn on the page. */
 export interface ImportedImage {
@@ -7,12 +8,14 @@ export interface ImportedImage {
   dataUrl: string;
   width: number;
   height: number;
-  /** An equation is copied out at the size of the writing, not as a figure. */
-  kind?: 'figure' | 'math';
+  /** An equation is copied out at the size of the writing; a photograph is never traced. */
+  kind?: 'figure' | 'math' | 'photo';
   /** Width on the source page, in points. */
   pointWidth?: number;
   /** Size of the running text it was taken from, in points. */
   sourceSize?: number;
+  /** The figure traced into lines and words, so it can be copied out by hand. */
+  sketch?: Sketch;
 }
 
 export interface ImportResult {

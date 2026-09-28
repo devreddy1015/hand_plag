@@ -784,6 +784,234 @@ progress {
   border-left-color: var(--danger);
 }
 
+/* ------------------------------------------------------------------ dialogs */
+
+.spacer {
+  flex: 1;
+}
+
+kbd {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.field.inline select {
+  width: auto;
+}
+
+dialog.sheet {
+  width: min(980px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+dialog.sheet[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+dialog.sheet::backdrop {
+  background: rgba(16, 20, 32, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.sheet-head,
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+}
+
+.sheet-head {
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-head h2 {
+  font-size: 13px;
+}
+
+.sheet-head input[type='text'] {
+  flex: 1;
+  max-width: 280px;
+}
+
+.sheet-head form {
+  margin: 0 0 0 auto;
+}
+
+.sheet-foot {
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.hand-body {
+  display: grid;
+  grid-template-columns: 230px 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hand-chars {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: max-content;
+  gap: 4px;
+  padding: 10px;
+  overflow-y: auto;
+  max-height: 60vh;
+  border-right: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.hand-chars .char {
+  padding: 4px 0;
+  font: 15px/1.2 ui-serif, Georgia, serif;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.hand-chars .char[data-state='part'] {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
+.hand-chars .char[data-state='done'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hand-chars .char[aria-pressed='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hand-work,
+.sketch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.hand-prompt {
+  margin: 0;
+  font-size: 15px;
+}
+
+.hand-prompt b {
+  font: 600 26px/1 ui-serif, Georgia, serif;
+  padding: 0 6px;
+}
+
+canvas.pad {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: #fdfcf7;
+  cursor: crosshair;
+  touch-action: none;
+  --pad-ink: #1d3b8f;
+  --pad-rule: rgba(60, 90, 150, 0.45);
+}
+
+.pad-tools input[type='text'] {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+}
+
+.own-hands {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.own-hands:empty {
+  display: none;
+}
+
+.own-hand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.own-hand-row[aria-current='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.own-hand-row canvas {
+  width: 120px;
+  height: 34px;
+  flex: none;
+}
+
+.own-hand-row .who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.own-hand-row .who small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.gallery.fonts .sample canvas {
+  width: 100%;
+  height: 40px;
+  aspect-ratio: auto;
+  background: transparent;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .hand-body {
+    grid-template-columns: 1fr;
+  }
+
+  .hand-chars {
+    grid-template-columns: repeat(10, 1fr);
+    max-height: 120px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 /* ------------------------------------------------------------------- mobile */
 
 @media (max-width: 900px) {
@@ -841,6 +1069,15 @@ progress {
 
   .tagline {
     display: none;
+  }
+
+  .stage-bar #status,
+  #reseed-stage .label {
+    display: none;
+  }
+
+  .stage-bar {
+    gap: 8px;
   }
 }
 

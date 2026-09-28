@@ -1,36 +1,8 @@
 import { drawPaper, get2d, MM, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
+import { penFor, smoothSamples, tracePenStroke, type PenStyle } from './pen';
 import { clamp, hashInts, mulberry32 } from './random';
-import type { DocumentLayout, InkStroke, PenType, PlacedGlyph, PlacedImage, Settings } from './types';
-
-interface PenStyle {
-  /** Extra outline at full pressure, as a fraction of the font size. */
-  strokeWeight: number;
-  /** Ink bleed blur radius in millimetres. */
-  bleed: number;
-  bleedAlpha: number;
-  alpha: number;
-  /** Fraction of the stroke knocked out by the tooth of the paper. */
-  grain: number;
-  /**
-   * A chisel or flexible nib lays down ink across its width, so strokes across
-   * the nib are broad and strokes along it are fine. `nib` is that width as a
-   * fraction of the font size, `nibAngle` the angle the nib is held at.
-   */
-  nib: number;
-  nibAngle: number;
-  /** How much ink pools where the pen is set down. */
-  pooling: number;
-}
-
-const PENS: Record<PenType, PenStyle> = {
-  ballpoint: { strokeWeight: 0.012, bleed: 0.05, bleedAlpha: 0.25, alpha: 0.95, grain: 0.05, nib: 0, nibAngle: 0, pooling: 0.5 },
-  gel: { strokeWeight: 0.024, bleed: 0.08, bleedAlpha: 0.35, alpha: 1, grain: 0, nib: 0, nibAngle: 0, pooling: 0.7 },
-  rollerball: { strokeWeight: 0.018, bleed: 0.11, bleedAlpha: 0.4, alpha: 0.97, grain: 0, nib: 0.02, nibAngle: 40, pooling: 0.9 },
-  fountain: { strokeWeight: 0.016, bleed: 0.15, bleedAlpha: 0.45, alpha: 0.93, grain: 0, nib: 0.055, nibAngle: 42, pooling: 1.1 },
-  calligraphy: { strokeWeight: 0.008, bleed: 0.12, bleedAlpha: 0.4, alpha: 0.96, grain: 0, nib: 0.13, nibAngle: 40, pooling: 1.3 },
-  felt: { strokeWeight: 0.048, bleed: 0.18, bleedAlpha: 0.5, alpha: 1, grain: 0.02, nib: 0, nibAngle: 0, pooling: 0.4 },
-  pencil: { strokeWeight: 0.004, bleed: 0.03, bleedAlpha: 0.2, alpha: 0.78, grain: 0.5, nib: 0.018, nibAngle: 55, pooling: 0 },
-};
+import { createWarp, forEachPoint, traceOutline, warpStroke, type GlyphShapes, type Outline, type StrokeGlyph } from './shapes';
+import type { DocumentLayout, InkStroke, PlacedGlyph, PlacedImage, Settings } from './types';
 
 /**
  * Copies of a glyph laid side by side to make up the width of a nib. The
@@ -48,6 +20,11 @@ export interface RenderOptions {
   createCanvas: CanvasFactory;
   /** The picture for a placed diagram, or null if it is not to hand. */
   images?: (id: string) => CanvasImageSource | null;
+  /**
+   * Letter outlines and stroke-drawn letters. Without them every letter is
+   * drawn by the browser from the font, identical each time.
+   */
+  shapes?: GlyphShapes;
 }
 
 const layerPool = new Map<string, AnyCanvas>();
@@ -94,8 +71,10 @@ export function renderPage(
   drawPaper(ctx, geom, s, scale, pageIndex, createCanvas);
 
   const page0 = doc.pages[pageIndex];
-  if (s.diagrams && s.diagramStyle === 'pasted' && page0 && page0.images.length > 0) {
-    drawPastedImages(ctx, page0.images, opts);
+  if (s.diagrams && page0 && page0.images.length > 0) {
+    // Photographs are always stuck on; drawings only when asked to be.
+    const stuck = s.diagramStyle === 'pasted' ? page0.images : page0.images.filter((image) => image.photo);
+    if (stuck.length > 0) drawPastedImages(ctx, stuck, opts);
   }
 
   // Ink from the other side of the sheet, showing faintly through the paper.
@@ -123,7 +102,7 @@ export function renderPage(
     const ink = get2d(inkCanvas);
     drawInk(ink, doc, pageIndex, s, opts, false);
 
-    const pen = PENS[s.pen] ?? PENS.ballpoint;
+    const pen = penFor(s.pen);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'multiply';
@@ -152,12 +131,13 @@ function drawInk(
   opts: RenderOptions,
   plain: boolean,
 ): void {
-  const pen = PENS[s.pen] ?? PENS.ballpoint;
+  const pen = penFor(s.pen);
   const palette = shadePalette(s.inkColor);
   const fontPx = doc.fontPx;
   const { scale } = opts;
   const page = doc.pages[pageIndex];
   const weight = clamp(s.inkWeight, 0, 3);
+  const shapes = opts.shapes;
 
   // A nib is a short line, not a point: draw the glyph once per step across it.
   const nibWidth = plain ? 0 : pen.nib * fontPx;
@@ -165,8 +145,8 @@ function drawInk(
   const nx = Math.cos(pen.nibAngle * (Math.PI / 180));
   const ny = Math.sin(pen.nibAngle * (Math.PI / 180));
 
-  if (s.diagrams && s.diagramStyle === 'sketch' && page.images.length > 0) {
-    drawSketchedImages(ctx, page.images, s, opts);
+  if (s.diagrams && s.diagramStyle === 'sketch' && page.images.some((image) => !image.photo)) {
+    drawSketchedImages(ctx, page.images.filter((image) => !image.photo), s, opts);
   }
 
   ctx.save();
@@ -184,25 +164,62 @@ function drawInk(
       ctx.direction = rtl ? 'rtl' : 'ltr';
     }
     const color = palette[Math.round(clamp(g.shade, -1, 1) * SHADE_STEPS) + SHADE_STEPS];
-    // Each pass adds ink on top of the last, so ask each for less than the total.
     const alpha = g.opacity * pen.alpha;
-    ctx.globalAlpha = steps === 1 ? alpha : 1 - Math.pow(1 - alpha, 1 / steps);
     ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+
+    // A letter from the writer's own hand is a set of pen strokes.
+    const written = !g.rtl && shapes?.strokeGlyph ? shapes.strokeGlyph(g.text, g.variant ?? 0) : null;
+    if (written) {
+      ctx.globalAlpha = alpha;
+      drawStrokeGlyph(ctx, g, written, shapes!, pen, fontPx, scale, weight, plain);
+      continue;
+    }
+
+    const outline = !g.rtl && shapes ? shapes.outline(g.text) : null;
+    const warp =
+      outline && g.warp !== undefined && g.warp > 0
+        ? createWarp({
+            amount: g.warp,
+            handSeed: s.seed,
+            unit: g.text,
+            variant: g.variant ?? 0,
+            instanceSeed: g.seed ?? 0,
+            advance: inkWidth(outline),
+            xHeight: shapes!.xHeight,
+            pinEnds: shapes!.connected,
+          })
+        : null;
+
+    // Each pass adds ink on top of the last, so ask each for less than the total.
+    ctx.globalAlpha = steps === 1 ? alpha : 1 - Math.pow(1 - alpha, 1 / steps);
     const stroke = pen.strokeWeight * weight * fontPx * (0.3 + g.pressure);
+    const outlined = stroke * scale > 0.15;
+    ctx.lineWidth = stroke;
 
     for (let i = 0; i < steps; i++) {
       const t = steps === 1 ? 0 : (i / (steps - 1) - 0.5) * nibWidth;
-      ctx.setTransform(scale, 0, 0, scale, 0, 0);
-      ctx.translate(g.x + nx * t, g.y + ny * t);
-      if (g.rotation !== 0) ctx.rotate(g.rotation);
-      if (g.skew !== 0) ctx.transform(1, 0, -g.skew, 1, 0, 0);
-      ctx.scale(g.scaleX, g.scaleY);
-      if (stroke * scale > 0.15) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = stroke;
-        ctx.strokeText(g.text, 0, 0);
+      placeGlyph(ctx, g, scale, g.x + nx * t, g.y + ny * t);
+      if (outline) {
+        ctx.beginPath();
+        traceOutline(ctx, outline, fontPx, warp);
+        ctx.fill();
+        if (outlined) ctx.stroke();
+      } else {
+        if (outlined) ctx.strokeText(g.text, 0, 0);
+        ctx.fillText(g.text, 0, 0);
       }
-      ctx.fillText(g.text, 0, 0);
+    }
+
+    // Gel and fountain ink dries darker along the edge of the stroke.
+    if (outline && pen.edge > 0 && !plain) {
+      placeGlyph(ctx, g, scale, g.x, g.y);
+      ctx.globalAlpha = alpha * pen.edge * 0.55;
+      ctx.strokeStyle = palette[Math.min(palette.length - 1, Math.round(clamp(g.shade + 0.7, -1, 1) * SHADE_STEPS) + SHADE_STEPS)];
+      ctx.lineWidth = fontPx * 0.011;
+      ctx.beginPath();
+      traceOutline(ctx, outline, fontPx, warp);
+      ctx.stroke();
     }
 
     if (g.blot !== undefined && g.blot > 0 && pen.pooling > 0 && !plain) {
@@ -211,22 +228,126 @@ function drawInk(
   }
   ctx.restore();
 
-  if (page.strokes.length > 0) drawStrokes(ctx, page.strokes, palette, scale, weight);
+  if (page.strokes.length > 0) drawStrokes(ctx, page.strokes, palette, pen, fontPx, scale, weight, plain);
 
-  const grain = plain ? 0 : pen.grain;
-  if (grain > 0) {
-    // Paper tooth: punch tiny holes in the stroke.
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalCompositeOperation = 'destination-out';
-    const tile = noiseTile(s.seed + pageIndex, 160, grain, opts.createCanvas);
-    const pattern = ctx.createPattern(tile as CanvasImageSource, 'repeat');
-    if (pattern) {
-      ctx.fillStyle = pattern;
-      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  if (!plain) {
+    // Ink does not go down evenly: pressure comes and goes, and the paper
+    // takes it up more in some places than others.
+    const density = pen.density * clamp(s.jitter.ink, 0, 2);
+    if (density > 0.005) knockBack(ctx, densityTile(s.seed + pageIndex, scale, density, opts.createCanvas), s.seed, pageIndex);
+    if (pen.grain > 0) {
+      // Paper tooth: punch tiny holes in the stroke.
+      knockBack(ctx, noiseTile(s.seed + pageIndex, 160, pen.grain, opts.createCanvas), s.seed, pageIndex);
     }
-    ctx.restore();
   }
+}
+
+/** Remove ink wherever a tile says so, tiled over the whole layer. */
+function knockBack(ctx: Ctx2D, tile: AnyCanvas, seed: number, pageIndex: number): void {
+  const pattern = ctx.createPattern(tile as CanvasImageSource, 'repeat');
+  if (!pattern) return;
+  ctx.save();
+  // Shift the tile per page so no two pages share the same pattern.
+  const ox = hashInts(seed, pageIndex, 0xde5) % tile.width;
+  const oy = hashInts(pageIndex, seed, 0xde5) % tile.height;
+  ctx.setTransform(1, 0, 0, 1, ox, oy);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = pattern;
+  ctx.fillRect(-ox, -oy, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
+}
+
+/** Set the transform that puts a letter where the layout placed it. */
+function placeGlyph(ctx: Ctx2D, g: PlacedGlyph, scale: number, x: number, y: number): void {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.translate(x, y);
+  if (g.rotation !== 0) ctx.rotate(g.rotation);
+  if (g.skew !== 0) ctx.transform(1, 0, -g.skew, 1, 0, 0);
+  ctx.scale(g.scaleX, g.scaleY);
+}
+
+/** The pen stroke-drawn letters are measured against. */
+const BALLPOINT_LINE = 0.052;
+
+const inkWidths = new WeakMap<Outline, number>();
+
+/** How far right a letter's ink reaches, in em: the span the bend is measured over. */
+function inkWidth(outline: Outline): number {
+  let w = inkWidths.get(outline);
+  if (w === undefined) {
+    let max = 0.1;
+    forEachPoint(outline, (x) => {
+      if (x > max) max = x;
+    });
+    w = max;
+    inkWidths.set(outline, w);
+  }
+  return w;
+}
+
+/**
+ * A letter from the writer's own hand: each stroke is drawn as the pen moved,
+ * after being bent like any other letter. The points are taken to the page
+ * first, so the pen keeps its width however the letter leans.
+ */
+function drawStrokeGlyph(
+  ctx: Ctx2D,
+  g: PlacedGlyph,
+  glyph: StrokeGlyph,
+  shapes: GlyphShapes,
+  pen: PenStyle,
+  fontPx: number,
+  scale: number,
+  weight: number,
+  plain: boolean,
+): void {
+  // Your own letters already differ copy to copy; they are bent only a little.
+  const warp =
+    g.warp !== undefined && g.warp > 0
+      ? createWarp({
+          amount: g.warp * 0.55,
+          handSeed: 0,
+          unit: g.text,
+          variant: g.variant ?? 0,
+          instanceSeed: g.seed ?? 0,
+          advance: glyph.advance,
+          xHeight: shapes.xHeight,
+          pinEnds: false,
+        })
+      : null;
+  const cos = Math.cos(g.rotation);
+  const sin = Math.sin(g.rotation);
+  // The hand's own line weight, made heavier or lighter by the pen in use.
+  const penScale = pen.lineWeight / BALLPOINT_LINE;
+  const width =
+    (shapes.strokeWeight ?? pen.lineWeight) * penScale * fontPx * Math.sqrt(g.scaleX * g.scaleY) * clamp(weight, 0.2, 3) * (0.85 + 0.3 * g.pressure);
+  const shape = {
+    width,
+    nib: plain ? 0 : pen.nib * fontPx * 0.9,
+    nibAngle: pen.nibAngle * (Math.PI / 180),
+    taper: pen.taper,
+    taperStart: true,
+    taperEnd: true,
+    taperLength: fontPx * 0.08,
+  };
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.beginPath();
+  for (const raw of glyph.strokes) {
+    const stroke = warpStroke(raw, warp);
+    const pts = new Float32Array(stroke.length);
+    for (let i = 0; i < stroke.length; i += 3) {
+      // Scale, then lean, then turn, then move: the order the layout meant.
+      const sx = stroke[i] * fontPx * g.scaleX;
+      const sy = stroke[i + 1] * fontPx * g.scaleY;
+      const kx = sx - g.skew * sy;
+      pts[i] = g.x + kx * cos - sy * sin;
+      pts[i + 1] = g.y + kx * sin + sy * cos;
+      pts[i + 2] = stroke[i + 2];
+    }
+    tracePenStroke(ctx, smoothSamples(pts, 3, Math.max(0.25, 0.6 / scale)), shape);
+  }
+  ctx.fill();
 }
 
 const sketchCache = new Map<string, AnyCanvas>();
@@ -357,36 +478,56 @@ function drawPool(ctx: Ctx2D, g: PlacedGlyph, color: string, fontPx: number, poo
   ctx.fill();
 }
 
-/** Underlines, strike-outs, carets, bullets and stray dots of ink. */
-function drawStrokes(ctx: Ctx2D, strokes: InkStroke[], palette: string[], scale: number, weight: number): void {
+/**
+ * Underlines, strike-outs, carets, bullets, stray dots of ink and diagrams:
+ * everything drawn with the pen that is not a letter. Each is drawn as a pen
+ * stroke — thinning where the pen touches down and lifts off, broad across a
+ * nib — rather than as a line of one width.
+ */
+function drawStrokes(
+  ctx: Ctx2D,
+  strokes: InkStroke[],
+  palette: string[],
+  pen: PenStyle,
+  fontPx: number,
+  scale: number,
+  weight: number,
+  plain: boolean,
+): void {
   ctx.save();
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.lineJoin = 'round';
+  const step = Math.max(0.25, 0.7 / scale);
+  const nib = plain ? 0 : pen.nib * fontPx * 0.8;
+  const nibAngle = pen.nibAngle * (Math.PI / 180);
+  const flat: number[] = [];
   for (const stroke of strokes) {
     const color = palette[Math.round(clamp(stroke.shade, -1, 1) * SHADE_STEPS) + SHADE_STEPS];
     ctx.globalAlpha = stroke.opacity;
-    ctx.strokeStyle = color;
     ctx.fillStyle = color;
     const lw = Math.max(0.2, stroke.width * weight);
-    if (stroke.points.length === 1) {
-      const p = stroke.points[0];
+    flat.length = 0;
+    for (const p of stroke.points) flat.push(p.x, p.y);
+    const samples = stroke.points.length === 1 ? [{ x: flat[0], y: flat[1], p: 1 }] : smoothSamples(flat, 2, step);
+    if (stroke.fill && stroke.points.length >= 3) {
+      // Inked in: the inside of the outline, then the outline itself on top.
       ctx.beginPath();
-      ctx.arc(p.x, p.y, lw, 0, Math.PI * 2);
+      ctx.moveTo(flat[0], flat[1]);
+      for (let k = 2; k < flat.length; k += 2) ctx.lineTo(flat[k], flat[k + 1]);
+      ctx.closePath();
       ctx.fill();
-      continue;
     }
-    ctx.lineCap = stroke.taper ? 'round' : 'butt';
-    ctx.lineWidth = lw;
     ctx.beginPath();
-    const pts = stroke.points;
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length - 1; i++) {
-      const mx = (pts[i].x + pts[i + 1].x) / 2;
-      const my = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
-    }
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.stroke();
+    tracePenStroke(ctx, samples, {
+      // A single point is a dab: its radius was given, not its width.
+      width: stroke.points.length === 1 ? lw * 2 : lw,
+      nib: stroke.points.length === 1 ? 0 : nib * Math.min(1, lw / (fontPx * 0.05)),
+      nibAngle,
+      taper: stroke.taper ? pen.taper : pen.taper * 0.3,
+      taperStart: true,
+      taperEnd: stroke.taper !== false,
+      taperLength: fontPx * 0.25,
+    });
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -447,6 +588,62 @@ function noiseTile(seed: number, size: number, density: number, createCanvas: Ca
   ctx.putImageData(img, 0, 0);
   noiseCache.set(key, canvas);
   return canvas;
+}
+
+const densityCache = new Map<string, AnyCanvas>();
+
+/**
+ * A seamless tile saying how much ink to take away, and where: soft patches a
+ * millimetre or so across, where the pen pressed less or the paper drank less,
+ * and a fainter fine mottle inside them. Most of the tile takes nothing away.
+ */
+function densityTile(seed: number, scale: number, strength: number, createCanvas: CanvasFactory): AnyCanvas {
+  const size = Math.round(clamp(30 * MM * scale, 96, 1400));
+  const key = `${seed}:${size}:${strength.toFixed(3)}`;
+  const cached = densityCache.get(key);
+  if (cached) return cached;
+  if (densityCache.size > 8) densityCache.clear();
+
+  const canvas = createCanvas(size, size);
+  const ctx = get2d(canvas);
+  const img = ctx.createImageData(size, size);
+  const rng = mulberry32(hashInts(seed, 0xd3a5));
+  const octave = (cells: number) => {
+    const lattice = new Float32Array(cells * cells);
+    for (let i = 0; i < lattice.length; i++) lattice[i] = rng();
+    const cell = size / cells;
+    return (x: number, y: number) => {
+      const gx = x / cell;
+      const gy = y / cell;
+      const x0 = Math.floor(gx) % cells;
+      const y0 = Math.floor(gy) % cells;
+      const x1 = (x0 + 1) % cells;
+      const y1 = (y0 + 1) % cells;
+      const tx = smooth(gx - Math.floor(gx));
+      const ty = smooth(gy - Math.floor(gy));
+      const a = lattice[y0 * cells + x0] + (lattice[y0 * cells + x1] - lattice[y0 * cells + x0]) * tx;
+      const b = lattice[y1 * cells + x0] + (lattice[y1 * cells + x1] - lattice[y1 * cells + x0]) * tx;
+      return a + (b - a) * ty;
+    };
+  };
+  // Patches about 2 mm across, and a mottle about a third of a millimetre.
+  const coarse = octave(Math.max(4, Math.round(30 / 2)));
+  const fine = octave(Math.max(8, Math.round(30 / 0.35)));
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const patch = coarse(x, y);
+      const mottle = fine(x, y);
+      const take = smooth(clamp((patch - 0.45) / 0.5, 0, 1)) * 0.85 + mottle * mottle * 0.2;
+      img.data[(y * size + x) * 4 + 3] = Math.round(clamp(take * strength, 0, 1) * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  densityCache.set(key, canvas);
+  return canvas;
+}
+
+function smooth(t: number): number {
+  return t * t * (3 - 2 * t);
 }
 
 /** A flatbed-scan look: a slightly crooked page, uneven light and sensor noise. */
