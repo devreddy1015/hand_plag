@@ -1,0 +1,1 @@
+var e=new URL(`kalam-latin-400-normal-Bl-H2BUA.woff`,import.meta.url).href;export{e as default};

@@ -1,0 +1,1 @@
+var e=new URL(`gochi-hand-latin-400-normal-DC0_N7qt.woff`,import.meta.url).href;export{e as default};

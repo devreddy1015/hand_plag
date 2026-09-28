@@ -1,0 +1,1 @@
+var e=new URL(`rock-salt-latin-400-normal-1xRqa3fS.woff`,import.meta.url).href;export{e as default};

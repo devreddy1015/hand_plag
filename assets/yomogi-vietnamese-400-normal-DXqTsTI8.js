@@ -1,0 +1,1 @@
+var e=new URL(`yomogi-vietnamese-400-normal-pn5JGS6_.woff`,import.meta.url).href;export{e as default};

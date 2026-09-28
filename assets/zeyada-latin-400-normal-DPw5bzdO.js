@@ -1,0 +1,1 @@
+var e=new URL(`zeyada-latin-400-normal-CBkeVrAv.woff`,import.meta.url).href;export{e as default};

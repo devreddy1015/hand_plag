@@ -1,0 +1,1 @@
+var e=new URL(`homemade-apple-latin-400-normal-BBARCPg0.woff`,import.meta.url).href;export{e as default};

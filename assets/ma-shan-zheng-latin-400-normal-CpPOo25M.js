@@ -1,0 +1,1 @@
+var e=new URL(`ma-shan-zheng-latin-400-normal-CtJdguPy.woff`,import.meta.url).href;export{e as default};

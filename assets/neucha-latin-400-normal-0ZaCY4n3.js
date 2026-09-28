@@ -1,0 +1,1 @@
+var e=new URL(`neucha-latin-400-normal-BKqh4hRb.woff`,import.meta.url).href;export{e as default};

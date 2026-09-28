@@ -1,0 +1,1 @@
+var e=new URL(`neucha-cyrillic-400-normal-CYVGZO1N.woff`,import.meta.url).href;export{e as default};

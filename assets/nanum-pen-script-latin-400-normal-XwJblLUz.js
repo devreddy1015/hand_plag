@@ -1,0 +1,1 @@
+var e=new URL(`nanum-pen-script-latin-400-normal-CEV0Fmsy.woff`,import.meta.url).href;export{e as default};

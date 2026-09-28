@@ -1,0 +1,1 @@
+var e=new URL(`covered-by-your-grace-latin-400-normal-CgK0HgSs.woff`,import.meta.url).href;export{e as default};

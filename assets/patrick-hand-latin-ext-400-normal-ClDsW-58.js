@@ -1,0 +1,1 @@
+var e=new URL(`patrick-hand-latin-ext-400-normal-C2ywpnn3.woff`,import.meta.url).href;export{e as default};

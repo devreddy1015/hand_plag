@@ -1,0 +1,1 @@
+var e=new URL(`patrick-hand-vietnamese-400-normal-CZjY324Y.woff`,import.meta.url).href;export{e as default};

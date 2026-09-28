@@ -1,0 +1,1 @@
+var e=new URL(`patrick-hand-latin-400-normal-Df9_VoRQ.woff`,import.meta.url).href;export{e as default};

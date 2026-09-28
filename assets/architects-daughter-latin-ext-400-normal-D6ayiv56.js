@@ -1,0 +1,1 @@
+var e=new URL(`architects-daughter-latin-ext-400-normal-FqHtA13I.woff`,import.meta.url).href;export{e as default};

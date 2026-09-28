@@ -1,0 +1,1 @@
+var e=new URL(`cedarville-cursive-latin-400-normal-B_pP7-Bd.woff`,import.meta.url).href;export{e as default};

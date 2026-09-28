@@ -1,0 +1,1 @@
+var e=new URL(`reenie-beanie-latin-400-normal-vYxg_nup.woff`,import.meta.url).href;export{e as default};

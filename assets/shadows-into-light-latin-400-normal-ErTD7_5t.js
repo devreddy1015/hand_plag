@@ -1,0 +1,1 @@
+var e=new URL(`shadows-into-light-latin-400-normal-C6MG6Ljx.woff`,import.meta.url).href;export{e as default};

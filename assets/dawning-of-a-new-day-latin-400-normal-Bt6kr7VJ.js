@@ -1,0 +1,1 @@
+var e=new URL(`dawning-of-a-new-day-latin-400-normal-BSpi7PhA.woff`,import.meta.url).href;export{e as default};

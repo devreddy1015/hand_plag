@@ -1,0 +1,1 @@
+var e=new URL(`yomogi-latin-ext-400-normal-CfulzrFU.woff`,import.meta.url).href;export{e as default};

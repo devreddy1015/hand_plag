@@ -1,0 +1,1 @@
+var e=new URL(`caveat-cyrillic-400-normal-CebvvJET.woff`,import.meta.url).href;export{e as default};

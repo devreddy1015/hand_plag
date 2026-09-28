@@ -1,0 +1,1 @@
+var e=new URL(`indie-flower-latin-ext-400-normal-B8wL109X.woff`,import.meta.url).href;export{e as default};

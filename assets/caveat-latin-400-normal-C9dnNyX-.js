@@ -1,0 +1,1 @@
+var e=new URL(`caveat-latin-400-normal-BzhAQZkN.woff`,import.meta.url).href;export{e as default};

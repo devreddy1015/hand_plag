@@ -1,0 +1,1 @@
+var e=new URL(`just-another-hand-latin-400-normal-D4IF-823.woff`,import.meta.url).href;export{e as default};

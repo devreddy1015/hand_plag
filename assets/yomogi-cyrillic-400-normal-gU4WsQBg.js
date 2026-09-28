@@ -1,0 +1,1 @@
+var e=new URL(`yomogi-cyrillic-400-normal-lQaDrIXu.woff`,import.meta.url).href;export{e as default};
