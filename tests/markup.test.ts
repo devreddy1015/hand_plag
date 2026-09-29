@@ -28,6 +28,17 @@ describe('parseBlocks', () => {
     expect(parseBlocks('# heading', false)[0].text).toBe('# heading');
   });
 
+  it('drops characters no hand can write', () => {
+    // A PDF's ornament comes through as a control code; pasted text can carry private-use points.
+    expect(parseBlocks('Vector Analysis\u0088 Electrostatics \ue001 Potentials', true)[0].text).toBe('Vector Analysis Electrostatics  Potentials');
+  });
+
+  it('writes a script after an accented letter', () => {
+    const [block] = parseBlocks('A\u0304_{x} = A_{x}', true);
+    expect(block.text).toBe('A\u0304x = Ax');
+    expect(block.emphasis![2] & EM_SUB).toBe(EM_SUB);
+  });
+
   it('strips emphasis markers and records what they covered', () => {
     const [block] = parseBlocks('say **very** loud', true);
     expect(block.text).toBe('say very loud');

@@ -77,7 +77,12 @@ function block(kind: BlockKind, text: string, extra: Partial<Block> = {}): Block
 
 /** Split a document into blocks. Each block is written starting on a new line. */
 export function parseBlocks(text: string, markdown: boolean): Block[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    // Control codes and private-use points have no letter in any hand: left
+    // in, the browser would write its "missing letter" box on the page.
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ue000-\uf8ff]/g, '')
+    .split('\n');
   const out: Block[] = [];
 
   for (const raw of lines) {
