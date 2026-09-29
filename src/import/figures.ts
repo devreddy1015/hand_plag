@@ -131,6 +131,117 @@ export function findFigureBoxes(grid: Uint8Array, cols: number, rows: number, li
     .sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
+/**
+ * Clear the boxes drawn round running text: a shaded panel, a question box
+ * with a coloured title bar, a frame round a theorem. They are furniture —
+ * the words inside are the document — but to a search for blocks of drawing
+ * a frame is one big block, and everything written in it would be cut out as
+ * a picture and copied at a third of the size.
+ *
+ * A frame is a block that runs down both sides of its box and along most of
+ * the top and bottom, with lines of text set across it. Its sides, its title
+ * and footer bars, and any rule across it are cleared from `grid`; whatever
+ * is drawn inside — an equation's rules, a diagram — stays to be found in its
+ * own right. `texts` are the lines of text on the page, in the grid's units.
+ * Returns the frames that were cleared.
+ */
+export function clearFrames(grid: Uint8Array, cols: number, rows: number, cell: number, texts: Box[]): Box[] {
+  const label = new Int32Array(cols * rows).fill(-1);
+  const stack: number[] = [];
+  const cleared: Box[] = [];
+
+  for (let start = 0; start < grid.length; start++) {
+    if (grid[start] === 0 || label[start] !== -1) continue;
+    const members: number[] = [];
+    label[start] = start;
+    stack.push(start);
+    let minC = cols;
+    let maxC = -1;
+    let minR = rows;
+    let maxR = -1;
+    while (stack.length > 0) {
+      const index = stack.pop()!;
+      members.push(index);
+      const c = index % cols;
+      const r = (index - c) / cols;
+      minC = Math.min(minC, c);
+      maxC = Math.max(maxC, c);
+      minR = Math.min(minR, r);
+      maxR = Math.max(maxR, r);
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const nc = c + dc;
+          const nr = r + dr;
+          if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+          const next = nr * cols + nc;
+          if (grid[next] === 0 || label[next] !== -1) continue;
+          label[next] = start;
+          stack.push(next);
+        }
+      }
+    }
+
+    const w = maxC - minC + 1;
+    const h = maxR - minR + 1;
+    if (w < 8 || h < 4) continue;
+    const mine = (r: number, c: number) => label[r * cols + c] === start;
+    const band = (r: number, c0: number, c1: number) => {
+      for (let c = c0; c <= c1; c++) if (mine(r, c)) return true;
+      return false;
+    };
+    // How much of each side is drawn: a frame has all four.
+    let left = 0;
+    let rightSide = 0;
+    for (let r = minR; r <= maxR; r++) {
+      if (band(r, minC, minC + 1)) left++;
+      if (band(r, maxC - 1, maxC)) rightSide++;
+    }
+    let top = 0;
+    let foot = 0;
+    for (let c = minC; c <= maxC; c++) {
+      if (mine(minR, c) || mine(minR + 1, c)) top++;
+      if (mine(maxR, c) || mine(maxR - 1, c)) foot++;
+    }
+    // The words of a title bar are cut out of it, so its top may be broken —
+    // almost gone, under a title of two long lines — while its sides and
+    // the other edge still run the whole way.
+    const sides = Math.min(left, rightSide) / h;
+    if (sides < 0.85 || Math.max(top, foot) < w * 0.6 || (Math.min(top, foot) < w * 0.1 && sides < 0.95)) continue;
+
+    // Only a frame round writing is furniture; a box round a chart is part
+    // of the chart. A line of text set across most of it says which this is.
+    // Clearing the frame of a framed figure costs only the frame: whatever
+    // is drawn inside is still found.
+    const box = { x: minC * cell, y: minR * cell, width: w * cell, height: h * cell };
+    const across = texts.filter((t) => {
+      const midY = t.y + t.height / 2;
+      return midY > box.y && midY < bottom(box) && t.x >= box.x - cell && right(t) <= right(box) + cell && t.width >= box.width * 0.45;
+    });
+    if (across.length === 0) continue;
+
+    // Rows filled across a good part of the box are its bars and rules; the
+    // cells at its very edge are its sides.
+    // A title bar has its words cut out of it, so it counts from less.
+    const clearRow = new Uint8Array(h);
+    const fill = (r: number) => {
+      let filled = 0;
+      for (let c = minC; c <= maxC; c++) if (mine(r, c)) filled++;
+      return filled / w;
+    };
+    for (let r = minR; r <= maxR; r++) if (fill(r) >= 0.3) clearRow[r - minR] = 1;
+    for (let r = minR; r <= maxR && fill(r) >= 0.1; r++) clearRow[r - minR] = 1;
+    for (let r = maxR; r >= minR && fill(r) >= 0.1; r--) clearRow[r - minR] = 1;
+    for (const index of members) {
+      const c = index % cols;
+      const r = (index - c) / cols;
+      const edge = c <= minC + 1 || c >= maxC - 1 || r <= minR + 1 || r >= maxR - 1;
+      if (edge || clearRow[r - minR] === 1) grid[index] = 0;
+    }
+    cleared.push(box);
+  }
+  return cleared;
+}
+
 /** Spread every drawn cell out by `radius` cells, so near neighbours join up. */
 function dilate(grid: Uint8Array, cols: number, rows: number, radius: number): Uint8Array {
   // Two passes of a one-dimensional spread: the same result, far less work.
@@ -275,6 +386,58 @@ export function growToInk(box: Box, dark: (x: number, y: number, w: number, h: n
   for (let n = 0; n < room.sideways / step && dark(x - step, y, step, y1 - y); n++) x -= step;
   for (let n = 0; n < room.sideways / step && dark(x1, y, step, y1 - y); n++) x1 += step;
   return { x, y, width: x1 - x, height: y1 - y };
+}
+
+/**
+ * Tables, as boxes to cut out and copy like a figure. Written out line by
+ * line a table falls apart into a list of loose words — "Property",
+ * "Conductor", "Insulator" — so it is found instead: rows of three or more
+ * pieces of text on one baseline, their pieces starting at the same few
+ * places across the page, with the odd row that only continues a cell.
+ */
+export function findTables(lines: Line[], bodySize: number): { boxes: Box[]; consumed: Set<Line> } {
+  const rows: Line[][] = [];
+  for (const line of [...lines].sort((a, b) => a.y - b.y || a.x0 - b.x0)) {
+    const row = rows[rows.length - 1];
+    if (row && Math.abs(row[0].y - line.y) < line.size * 0.5) row.push(line);
+    else rows.push([line]);
+  }
+  const boxes: Box[] = [];
+  const consumed = new Set<Line>();
+  const leading = bodySize * 1.25;
+
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].length < 3) continue;
+    const starts = rows[i].map((line) => line.x0);
+    const at = (line: Line) => starts.some((x) => Math.abs(x - line.x0) < bodySize * 0.6);
+    const left = Math.min(...starts);
+    const reach = Math.max(...rows[i].map((line) => line.x1));
+    const table = [rows[i]];
+    let full = 1;
+    for (let k = i + 1; k < rows.length; k++) {
+      const row = rows[k];
+      if (row[0].y - table[table.length - 1][0].y > leading * 2.4) break;
+      if (!row.every(at)) break;
+      // A line of prose back at the margin ends the table.
+      if (row.length === 1 && Math.abs(row[0].x0 - left) < bodySize * 0.6 && row[0].x1 - row[0].x0 > (reach - left) * 0.5) break;
+      table.push(row);
+      if (row.length >= 2) full++;
+    }
+    if (table.length < 3 || full < 2) continue;
+    const all = table.flat();
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    for (const line of all) {
+      x0 = Math.min(x0, line.x0);
+      x1 = Math.max(x1, line.x1);
+      consumed.add(line);
+    }
+    const top = table[0][0].y - table[0][0].size * 1.2;
+    const last = table[table.length - 1][0];
+    boxes.push({ x: x0 - bodySize * 0.3, y: top, width: x1 - x0 + bodySize * 0.6, height: last.y + last.size * 0.5 - top });
+    i += table.length - 1;
+  }
+  return { boxes, consumed };
 }
 
 /** What a caption starts with, in the documents people actually hand in. */

@@ -1,3 +1,4 @@
+import { applyFinish, releaseFinishes } from './finish';
 import { drawPaper, get2d, MM, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
 import { penFor, smoothSamples, tracePenStroke, type PenStyle } from './pen';
 import { clamp, hashInts, mulberry32 } from './random';
@@ -49,6 +50,7 @@ function layer(w: number, h: number, key: string, createCanvas: CanvasFactory): 
 /** Release the cached layers. Worth calling after a high-resolution export. */
 export function releaseLayers(): void {
   layerPool.clear();
+  releaseFinishes();
 }
 
 /** Draw one page (paper + handwriting + optional finish) onto `target`. */
@@ -118,8 +120,9 @@ export function renderPage(
     ctx.restore();
   }
 
-  if (s.finish === 'scan') applyScanLook(target, ctx, s, pageIndex, scale, createCanvas);
-  else if (s.finish === 'photo') applyPhotoLook(target, ctx, s, pageIndex, scale, createCanvas);
+  if (s.finish !== 'none') {
+    applyFinish(s.finish, { target, ctx, seed: s.seed, pageIndex, scale, createCanvas, bindingSide: geom.bindingSide });
+  }
 }
 
 /** Paint the handwriting of one page as flat ink on a transparent layer. */
@@ -172,7 +175,7 @@ function drawInk(
     const written = !g.rtl && shapes?.strokeGlyph ? shapes.strokeGlyph(g.text, g.variant ?? 0) : null;
     if (written) {
       ctx.globalAlpha = alpha;
-      drawStrokeGlyph(ctx, g, written, shapes!, pen, fontPx, scale, weight, plain);
+      drawStrokeGlyph(ctx, g, written, shapes!, pen, fontPx, scale, weight, plain, s.seed);
       continue;
     }
 
@@ -301,19 +304,20 @@ function drawStrokeGlyph(
   scale: number,
   weight: number,
   plain: boolean,
+  seed: number,
 ): void {
   // Your own letters already differ copy to copy; they are bent only a little.
   const warp =
     g.warp !== undefined && g.warp > 0
       ? createWarp({
-          amount: g.warp * 0.55,
-          handSeed: 0,
+          amount: glyph.own ? g.warp * 0.55 : g.warp,
+          handSeed: glyph.own ? 0 : seed,
           unit: g.text,
           variant: g.variant ?? 0,
           instanceSeed: g.seed ?? 0,
           advance: glyph.advance,
           xHeight: shapes.xHeight,
-          pinEnds: false,
+          pinEnds: shapes.connected,
         })
       : null;
   const cos = Math.cos(g.rotation);
@@ -331,9 +335,10 @@ function drawStrokeGlyph(
     taperEnd: true,
     taperLength: fontPx * 0.08,
   };
+  const alpha = ctx.globalAlpha;
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.beginPath();
-  for (const raw of glyph.strokes) {
+  const rng = mulberry32(hashInts(g.seed ?? 0, 0x57e0));
+  glyph.strokes.forEach((raw) => {
     const stroke = warpStroke(raw, warp);
     const pts = new Float32Array(stroke.length);
     for (let i = 0; i < stroke.length; i += 3) {
@@ -345,9 +350,47 @@ function drawStrokeGlyph(
       pts[i + 1] = g.y + kx * sin + sy * cos;
       pts[i + 2] = stroke[i + 2];
     }
-    tracePenStroke(ctx, smoothSamples(pts, 3, Math.max(0.25, 0.6 / scale)), shape);
+    const samples = smoothSamples(pts, 3, Math.max(0.25, 0.6 / scale));
+    pressureAlong(samples, rng, plain ? 0 : 1);
+    // Each stroke is its own pass of the pen, so where two cross, or a loop
+    // closes over its start, the ink lies twice and comes out darker.
+    ctx.globalAlpha = alpha * (0.9 + rng() * 0.1);
+    ctx.beginPath();
+    tracePenStroke(ctx, samples, shape);
+    ctx.fill();
+    // Now and then a ballpoint leaves a bead of ink where it touches down.
+    if (!plain && samples.length > 3 && rng() < pen.pooling * 0.07) {
+      const s0 = samples[0];
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.beginPath();
+      ctx.arc(s0.x, s0.y, width * (0.55 + rng() * 0.25), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  ctx.globalAlpha = alpha;
+}
+
+/**
+ * How hard the pen pressed along a stroke. A hand bears down on strokes that
+ * pull towards it and eases off on those that push away, and the pressure
+ * wanders a little on top of that; so down-strokes come out a shade wider.
+ */
+function pressureAlong(samples: { x: number; y: number; p: number }[], rng: () => number, amount: number): void {
+  if (amount === 0 || samples.length < 3) return;
+  const phase = rng() * Math.PI * 2;
+  const wavelength = 6 + rng() * 6;
+  let along = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const a = samples[Math.max(0, i - 1)];
+    const b = samples[Math.min(samples.length - 1, i + 1)];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    if (i > 0) along += Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
+    const down = dy / len;
+    const wobble = Math.sin(along / wavelength + phase) * 0.06;
+    samples[i].p = Math.max(0.3, Math.min(1, samples[i].p * (0.86 + 0.14 * down + wobble)));
   }
-  ctx.fill();
 }
 
 const sketchCache = new Map<string, AnyCanvas>();
@@ -644,164 +687,4 @@ function densityTile(seed: number, scale: number, strength: number, createCanvas
 
 function smooth(t: number): number {
   return t * t * (3 - 2 * t);
-}
-
-/** A flatbed-scan look: a slightly crooked page, uneven light and sensor noise. */
-function applyScanLook(
-  target: AnyCanvas,
-  ctx: Ctx2D,
-  s: Settings,
-  pageIndex: number,
-  scale: number,
-  createCanvas: CanvasFactory,
-): void {
-  const w = target.width;
-  const h = target.height;
-  const copy = layer(w, h, 'finish', createCanvas);
-  get2d(copy).drawImage(target as CanvasImageSource, 0, 0);
-
-  const r = mulberry32(hashInts(s.seed, pageIndex, 0x5ca9));
-  const angle = (r() - 0.5) * 0.9 * (Math.PI / 180);
-  const dx = (r() - 0.5) * 1.5 * MM * scale;
-  const dy = (r() - 0.5) * 1.5 * MM * scale;
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = '#ecece8';
-  ctx.fillRect(0, 0, w, h);
-  ctx.translate(w / 2 + dx, h / 2 + dy);
-  ctx.rotate(angle);
-  ctx.drawImage(copy as CanvasImageSource, -w / 2, -h / 2);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-  // Uneven lamp light across the page.
-  const a = r() * Math.PI * 2;
-  const cx = w / 2;
-  const cy = h / 2;
-  const len = Math.hypot(w, h) / 2;
-  const light = ctx.createLinearGradient(cx - Math.cos(a) * len, cy - Math.sin(a) * len, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
-  light.addColorStop(0, 'rgba(255,255,255,0)');
-  light.addColorStop(1, 'rgba(60,55,50,0.10)');
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = light;
-  ctx.fillRect(0, 0, w, h);
-
-  const vignette = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.35, cx, cy, len);
-  vignette.addColorStop(0, 'rgba(255,255,255,0)');
-  vignette.addColorStop(1, 'rgba(90,90,90,0.12)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.globalCompositeOperation = 'source-over';
-  const pattern = ctx.createPattern(noiseTile(s.seed + 99, 128, 0.12, createCanvas) as CanvasImageSource, 'repeat');
-  if (pattern) {
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = pattern;
-    ctx.fillRect(0, 0, w, h);
-  }
-  ctx.restore();
-}
-
-/**
- * A photo of the page on a desk: the sheet is not quite square to the camera,
- * so it keystones; the light falls off to one side and the paper casts a soft
- * shadow. The warp is built from horizontal slices, which is exact for a
- * trapezoid and close enough for the small angles a hand-held phone makes.
- */
-function applyPhotoLook(
-  target: AnyCanvas,
-  ctx: Ctx2D,
-  s: Settings,
-  pageIndex: number,
-  scale: number,
-  createCanvas: CanvasFactory,
-): void {
-  const w = target.width;
-  const h = target.height;
-  const copy = layer(w, h, 'finish', createCanvas);
-  get2d(copy).drawImage(target as CanvasImageSource, 0, 0);
-
-  const r = mulberry32(hashInts(s.seed, pageIndex, 0x9401));
-  // Keystone: the far edge of the sheet is a little narrower than the near one.
-  const taper = (0.012 + r() * 0.022) * (r() < 0.5 ? -1 : 1);
-  const tilt = (r() - 0.5) * 1.6 * (Math.PI / 180);
-  const inset = 0.022 + r() * 0.02;
-  const shadowSide = r() < 0.5 ? -1 : 1;
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-
-  // The surface the page is lying on.
-  const desk = ctx.createLinearGradient(0, 0, w, h);
-  desk.addColorStop(0, '#d7d2c9');
-  desk.addColorStop(1, '#bdb6aa');
-  ctx.fillStyle = desk;
-  ctx.fillRect(0, 0, w, h);
-  const deskNoise = ctx.createPattern(noiseTile(s.seed + 7, 128, 0.16, createCanvas) as CanvasImageSource, 'repeat');
-  if (deskNoise) {
-    ctx.globalAlpha = 0.25;
-    ctx.fillStyle = deskNoise;
-    ctx.fillRect(0, 0, w, h);
-    ctx.globalAlpha = 1;
-  }
-
-  const pageW = w * (1 - inset * 2);
-  const pageH = h * (1 - inset * 2);
-  ctx.translate(w / 2, h / 2);
-  ctx.rotate(tilt);
-
-  // Soft contact shadow under the sheet.
-  ctx.save();
-  ctx.globalAlpha = 0.5;
-  if (supportsFilter(ctx)) ctx.filter = `blur(${Math.max(2, 0.9 * MM * scale).toFixed(1)}px)`;
-  ctx.fillStyle = 'rgba(40,36,30,0.55)';
-  ctx.fillRect(-pageW / 2 + shadowSide * pageW * 0.012, -pageH / 2 + pageH * 0.012, pageW, pageH);
-  ctx.filter = 'none';
-  ctx.restore();
-
-  // Slice the page into rows; each row is scaled to its share of the keystone.
-  const rows = Math.max(24, Math.min(240, Math.round(pageH / 6)));
-  for (let i = 0; i < rows; i++) {
-    const t0 = i / rows;
-    const t1 = (i + 1) / rows;
-    const sy = t0 * h;
-    const sh = (t1 - t0) * h + 1;
-    const k0 = 1 + taper * (t0 - 0.5) * 2;
-    const dw = pageW * k0;
-    const dx = -dw / 2;
-    const dy = -pageH / 2 + t0 * pageH;
-    const dh = (t1 - t0) * pageH + 1;
-    ctx.drawImage(copy as CanvasImageSource, 0, sy, w, sh, dx, dy, dw, dh);
-  }
-
-  // Light falling across the sheet, and a little shading where it curls.
-  const light = ctx.createLinearGradient(-pageW / 2, -pageH / 2, pageW / 2, pageH / 2);
-  light.addColorStop(0, 'rgba(255,252,240,0.10)');
-  light.addColorStop(0.55, 'rgba(255,255,255,0)');
-  light.addColorStop(1, 'rgba(45,40,35,0.16)');
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = light;
-  ctx.fillRect(-pageW / 2, -pageH / 2, pageW, pageH);
-  ctx.restore();
-
-  // Camera grain and a gentle vignette over the whole frame.
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const vignette = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.hypot(w, h) / 1.7);
-  vignette.addColorStop(0, 'rgba(255,255,255,0)');
-  vignette.addColorStop(1, 'rgba(30,28,25,0.22)');
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'source-over';
-  const grain = ctx.createPattern(noiseTile(s.seed + 31, 128, 0.1, createCanvas) as CanvasImageSource, 'repeat');
-  if (grain) {
-    ctx.globalAlpha = 0.3;
-    ctx.fillStyle = grain;
-    ctx.fillRect(0, 0, w, h);
-  }
-  ctx.globalAlpha = 1;
 }

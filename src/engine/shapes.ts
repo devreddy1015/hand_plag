@@ -42,6 +42,11 @@ export interface StrokeGlyph {
   strokes: Float32Array[];
   /** Distance to the next letter, in em. */
   advance: number;
+  /**
+   * Written by the writer on the pad: the copies already differ, since they
+   * were written separately, so each is bent only a little more.
+   */
+  own?: boolean;
 }
 
 /** Where the drawing engine gets letter shapes from. */

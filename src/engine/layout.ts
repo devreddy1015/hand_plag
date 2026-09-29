@@ -1,6 +1,7 @@
 import { EM_BOLD, EM_ITALIC, EM_SUB, EM_SUP, EM_UNDERLINE, parseBlocks, type Block } from './markup';
 import { clamp, createDrift, createNoise1D, gaussian, hashInts, hashString, mulberry32, smoothstep, type Rng } from './random';
 import { gapAfterFactor, gapBeforeFactor, graphemes, hyphenPoint, isRtlParagraph, tokenize, type Token } from './segment';
+import { nameDateFields } from './paper';
 import { sketchStrokes } from './sketch';
 import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, PlacedImage, Settings, Sketch, SketchLabel, TextArea } from './types';
 
@@ -59,7 +60,7 @@ const PERSONA_VARIANTS = 5;
 
 /** How much each pen varies in ink flow. */
 export const PEN_INK_VARIATION: Record<Settings['pen'], number> = {
-  ballpoint: 0.22,
+  ballpoint: 0.14,
   gel: 0.1,
   rollerball: 0.14,
   fountain: 0.32,
@@ -271,8 +272,10 @@ export function layoutDocument(
   const buildWord = (token: Token, rng: Rng, emAt: (offset: number) => number, sizeRatio: number): Word => {
     // Sampled first so it is part of every width this word reports.
     const wordScale = 1 + gaussian(rng) * amp.wordScale;
-    const wordShade = gaussian(rng) * 0.35;
-    const shadeOf = () => clamp((wordShade + gaussian(rng) * 0.15) * clamp(w.ink, 0, 2), -1, 1);
+    // A pen's colour drifts slowly and a little from letter to letter; it does
+    // not jump from word to word as if a different pen had written each.
+    const wordShade = gaussian(rng) * 0.12;
+    const shadeOf = () => clamp((wordShade + gaussian(rng) * 0.08) * clamp(w.ink, 0, 2), -1, 1);
     const letterSpacing = s.letterSpacing * fontPx * sizeRatio;
     const units: Unit[] = [];
     let em = 0;
@@ -752,13 +755,9 @@ export function layoutDocument(
     em: number,
     seed: number,
   ): void => {
-    const tokens = tokenize(label.text, false);
-    if (tokens.length === 0) return;
+    const { words, total } = wordsOf(label.text, em, seed);
+    if (words.length === 0) return;
     const rng = mulberry32(seed);
-    const ratio = em / fontPx;
-    const words = tokens.map((token, i) => buildWord(token, mulberry32(hashInts(seed, i, 0x1ab)), () => 0, ratio));
-    let total = 0;
-    words.forEach((word, i) => (total += (i > 0 ? word.gap : 0) + word.width));
     const printed = label.w * fig.width;
     const squeeze = printed > 0 && total > printed * 1.2 ? clamp((printed * 1.2) / total, 0.72, 1) : 1;
 
@@ -772,9 +771,22 @@ export function layoutDocument(
     const cx = fcx + lx * cos - ly * sin;
     const baseY = fcy + lx * sin + ly * cos + gaussian(rng) * amp.wordBaseline * 0.5;
     const slope = fig.rotation + clamp(gaussian(rng), -2, 2) * amp.slope * 1.5;
-    const tanSlope = Math.tan(slope);
-    const startX = cx - (total * squeeze) / 2;
+    writeWords(page, words, cx - (total * squeeze) / 2, baseY, slope, squeeze, seed);
+  };
 
+  /** A short run of words in the hand, and how wide it comes out. */
+  const wordsOf = (text: string, em: number, seed: number) => {
+    const tokens = tokenize(text, false);
+    const ratio = em / fontPx;
+    const words = tokens.map((token, i) => buildWord(token, mulberry32(hashInts(seed, i, 0x1ab)), () => 0, ratio));
+    let total = 0;
+    words.forEach((word, i) => (total += (i > 0 ? word.gap : 0) + word.width));
+    return { words, total };
+  };
+
+  /** Write words built by `wordsOf` from `startX` along a baseline at `slope`. */
+  const writeWords = (page: PageLayout, words: Word[], startX: number, baseY: number, slope: number, squeeze: number, seed: number): void => {
+    const tanSlope = Math.tan(slope);
     let x = startX;
     words.forEach((word, wi) => {
       if (wi > 0) x += word.gap * squeeze;
@@ -1079,6 +1091,48 @@ export function layoutDocument(
         });
         x += width(ch) * sc;
       }
+    });
+  }
+
+  // ------------------------------------------------------------ name and ID
+
+  // Written at the top of the sheet the way a student heads a page: on the
+  // printed name line where there is one, otherwise on the header rule — or
+  // in the margin above the first line — with the name at the left and the
+  // ID at the right.
+  const writerName = s.writerName.trim();
+  const writerId = s.writerId.trim();
+  if (writerName !== '' || writerId !== '') {
+    const heads = s.writerEveryPage ? pages : pages.slice(0, 1);
+    heads.forEach((page, i) => {
+      const geom = geomFor(i);
+      const seed = hashInts(s.seed, 0x4a3e, i);
+      const rng = mulberry32(seed);
+      const tilt = () => clamp(gaussian(rng), -2, 2) * amp.slope * 1.2;
+      const put = (text: string, x: number, baseline: number, em: number, align: 'left' | 'right', n: number, room = Infinity) => {
+        const { words, total } = wordsOf(text, em, hashInts(seed, n));
+        if (words.length === 0) return;
+        const squeeze = total > room ? clamp(room / total, 0.7, 1) : 1;
+        const start = align === 'right' ? x - total * squeeze : x;
+        writeWords(page, words, start, baseline + gaussian(rng) * spacing * 0.02, tilt(), squeeze, hashInts(seed, n, 7));
+      };
+      if (s.features.nameDateLine) {
+        const [name, second] = nameDateFields(geom);
+        const em = fontPx * 0.9;
+        const gap = fontPx * 0.25;
+        if (writerName !== '') put(writerName, name.blank + gap, name.y, em, 'left', 1, name.end - name.blank - gap);
+        if (writerId !== '') put(`ID ${writerId}`, second.blank + gap, second.y, em, 'left', 2, second.end - second.blank - gap);
+        return;
+      }
+      const first = geom.areas[0];
+      const last = geom.areas[geom.areas.length - 1];
+      const top = first.lines[0] ?? spacing;
+      // On the header rule, or a line's height above the first line written.
+      const baseline = geom.headerRuleY ?? Math.max(fontPx * 1.1, top - spacing);
+      const em = fontPx * (geom.headerRuleY === null && top - spacing < fontPx * 1.1 ? 0.75 : 0.95);
+      const span = last.right - first.left;
+      if (writerName !== '') put(`Name: ${writerName}`, first.left + spacing * 0.1, baseline, em, 'left', 1, writerId === '' ? span : span * 0.58);
+      if (writerId !== '') put(`ID: ${writerId}`, last.right - spacing * 0.1, baseline, em, 'right', 2, writerName === '' ? span : span * 0.38);
     });
   }
 

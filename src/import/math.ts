@@ -49,6 +49,15 @@ export function isMathFont(name: string | undefined | null): boolean {
   return MATH_FONT.test(name.replace(/^[A-Z]{6}\+/, ''));
 }
 
+/** Bold faces: TeX's bold extended fonts by their names, everything else by its style. */
+const BOLD_FONT = /bold|black|heavy|semibold|demibold|^CMBX|^CMB\d|^CMMIB|^CMBSY|^EUFB|^EUSB|^EURB/i;
+
+/** Is this font a bold face? */
+export function isBoldFont(name: string | undefined | null): boolean {
+  if (!name) return false;
+  return BOLD_FONT.test(name.replace(/^[A-Z]{6}\+/, ''));
+}
+
 export interface MathLimits {
   /** Left and right edge of the running text. */
   bodyLeft: number;
@@ -85,7 +94,10 @@ export function findMathBlocks(lines: Line[], limits: MathLimits): MathResult {
   const indented = (line: Line) => line.x0 > bodyLeft + bodySize * 0.8;
   /** Short enough not to be a line of prose that happens to hold a symbol. */
   const narrow = (line: Line) => line.x1 - line.x0 < measure * 0.94;
-  const display = (line: Line) => line.math >= 0.25 && indented(line) && narrow(line);
+  const display = (line: Line) => (line.math >= 0.25 && indented(line) && narrow(line)) || line.broken === true;
+  /** A scrap of a fraction or a limit, set small, close by a broken line. */
+  const scrap = (line: Line, near: Line) =>
+    near.broken === true && line.text.length <= 12 && line.x1 - line.x0 < measure * 0.3 && Math.abs(line.y - near.y) < leading * 0.9;
   /**
    * A fraction's denominator, or the limits on a sum: set in, narrow, and
    * either holding maths or too short to be a sentence. The length test
@@ -97,6 +109,23 @@ export function findMathBlocks(lines: Line[], limits: MathLimits): MathResult {
     narrow(line) &&
     (line.math > 0 || (line.text.length <= 12 && line.x1 - line.x0 < measure * 0.3));
 
+  // A fraction set inside a sentence puts its numerator and denominator on
+  // lines of their own, just above and below the sentence's baseline: the
+  // sentence has to be copied out as it stands, fraction and all.
+  const tiny = (line: Line) => line.text.length <= 12 && line.x1 - line.x0 < measure * 0.3;
+  for (const line of lines) {
+    if (line.broken || tiny(line)) continue;
+    const pieces = lines.filter(
+      (other) =>
+        other !== line &&
+        tiny(other) &&
+        Math.abs(other.y - line.y) < line.size * 0.9 &&
+        other.x0 >= line.x0 - line.size &&
+        other.x1 <= line.x1 + line.size,
+    );
+    if (pieces.length > 0) line.broken = true;
+  }
+
   for (let i = 0; i < lines.length; i++) {
     if (consumed.has(lines[i]) || !display(lines[i])) continue;
 
@@ -105,7 +134,7 @@ export function findMathBlocks(lines: Line[], limits: MathLimits): MathResult {
     // Reach backwards for a numerator sitting above the first line found.
     for (let k = i - 1; k >= 0; k--) {
       const above = lines[k];
-      if (consumed.has(above) || !fragment(above)) break;
+      if (consumed.has(above) || !(fragment(above) || scrap(above, block[0]))) break;
       if (block[0].y - above.y > leading * 1.35) break;
       block.unshift(above);
     }
@@ -115,14 +144,14 @@ export function findMathBlocks(lines: Line[], limits: MathLimits): MathResult {
       if (consumed.has(below)) break;
       const gap = below.y - block[block.length - 1].y;
       if (gap > leading * 1.9) break;
-      if (!display(below) && !fragment(below)) break;
+      if (!display(below) && !fragment(below) && !scrap(below, block[block.length - 1])) break;
       block.push(below);
       strongest = Math.max(strongest, below.math);
       i = k;
     }
 
     // A centred heading is indented and narrow too, so insist on real maths.
-    if (strongest < 0.4 && block.length < 2) continue;
+    if (strongest < 0.4 && block.length < 2 && !block[0].broken) continue;
 
     for (const line of block) consumed.add(line);
     boxes.push(around(block, bodySize));

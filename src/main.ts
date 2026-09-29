@@ -17,8 +17,8 @@ import { forgetPicturesExcept, pictureIdsIn } from './store';
 import { openHandDialog } from './ui/hand-dialog';
 import { drawSketch } from './ui/sketch-dialog';
 import { reflowHardWraps } from './import/shared';
-import { drawPage, drawPaperOnly, prepare, type Prepared } from './pipeline';
-import { PRESETS, applyPreset } from './ui/presets';
+import { drawLookSample, drawPage, drawPaperOnly, prepare, type Prepared } from './pipeline';
+import { MAIN_LOOKS, PRESETS, applyPreset, matchesPreset } from './ui/presets';
 
 const STORAGE_KEY = 'handscript.settings.v2';
 const ADVANCED_KEY = 'handscript.advanced.v1';
@@ -115,9 +115,9 @@ function saveSettings(): void {
   }, 400);
 }
 
-/** Everything except the text, so a style can travel in a link. */
+/** Everything except the text and who wrote it, so a style can travel in a link. */
 function styleOnly(): Partial<Settings> {
-  const { text: _text, ...rest } = settings;
+  const { text: _text, writerName: _name, writerId: _id, ...rest } = settings;
   return rest;
 }
 
@@ -183,6 +183,7 @@ const formatters: Record<string, (v: number) => string> = {
   deg: (v) => `${v > 0 ? '+' : ''}${v}°`,
   mm: (v) => (v === 0 ? 'off' : `${v} mm`),
   times: (v) => `${v.toFixed(2)}×`,
+  neat: (v) => (v < 0.2 ? 'Very neat' : v < 0.42 ? 'Neat' : v < 0.62 ? 'Natural' : v < 0.82 ? 'Hurried' : 'Messy'),
 };
 
 function syncControls(): void {
@@ -216,6 +217,16 @@ function syncControls(): void {
   document.querySelectorAll<HTMLElement>('#own-hands .own-hand-row').forEach((row, i) => {
     row.setAttribute('aria-current', String(settings.fontId === `hand:${ownHands[i]?.id}`));
   });
+  for (const chip of document.querySelectorAll<HTMLButtonElement>('#easy-hands .chip')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.font === settings.fontId));
+  }
+  for (const chip of document.querySelectorAll<HTMLButtonElement>('#easy-papers .chip')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.template === settings.template));
+  }
+  for (const card of document.querySelectorAll<HTMLButtonElement>('#easy-looks .look')) {
+    const preset = PRESETS.find((p) => p.id === card.dataset.look);
+    card.setAttribute('aria-pressed', String(preset !== undefined && matchesPreset(settings, preset)));
+  }
   $<HTMLInputElement>('#opt-page-breaks').checked = importOptions.keepPageBreaks;
   $<HTMLInputElement>('#opt-headings').checked = importOptions.detectHeadings;
   $<HTMLInputElement>('#opt-heads').checked = importOptions.dropRunningHeads;
@@ -231,6 +242,7 @@ function updateCharCount(): void {
   const chars = settings.text.length;
   const words = settings.text.trim() === '' ? 0 : settings.text.trim().split(/\s+/).length;
   charCount.textContent = `${chars.toLocaleString()} characters · ${words.toLocaleString()} words`;
+  $<HTMLSpanElement>('#easy-count').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
 }
 
 function readControl(el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement): unknown {
@@ -298,6 +310,7 @@ function bindControls(): void {
   buildPresets();
   buildTemplates();
   buildFonts();
+  buildEasy();
 
   const reseed = () => {
     settings.seed = randomSeed();
@@ -308,14 +321,20 @@ function bindControls(): void {
   $<HTMLButtonElement>('#quick-pdf').addEventListener('click', () => runExport('pdf'));
 
   $<HTMLButtonElement>('#hand-new').addEventListener('click', () => openHand(null));
-  $<HTMLButtonElement>('#draw-diagram').addEventListener('click', async () => {
+  // Carry on with the hand you have, or start one.
+  $<HTMLButtonElement>('#easy-own').addEventListener('click', () => openHand(ownHands[0]?.id ?? null));
+  const drawDiagram = async () => {
     const drawn = await drawSketch();
     if (!drawn) return;
     const id = `sketch-${Date.now().toString(36)}`;
     await addPicture(id, drawn.dataUrl, { sketch: drawn.sketch, kind: 'figure' });
     insertAtCursor(`\n![${drawn.caption.replace(/[[\]()]/g, ' ')}](${id})\n`);
     toast('Your diagram is on the page, drawn in the page’s own pen.');
-  });
+  };
+  $<HTMLButtonElement>('#draw-diagram').addEventListener('click', drawDiagram);
+  $<HTMLButtonElement>('#easy-draw').addEventListener('click', drawDiagram);
+  $<HTMLButtonElement>('#easy-pdf').addEventListener('click', () => runExport('pdf'));
+  $<HTMLButtonElement>('#easy-png').addEventListener('click', () => runExport('png'));
 
   $<HTMLButtonElement>('#reflow-text').addEventListener('click', () => {
     const joined = reflowHardWraps(settings.text);
@@ -340,11 +359,13 @@ function bindControls(): void {
     onSettingChanged('text');
   });
 
-  $<HTMLButtonElement>('#clear-text').addEventListener('click', () => {
-    settings.text = '';
-    onSettingChanged('text');
-    $<HTMLTextAreaElement>('#text').focus();
-  });
+  for (const id of ['#clear-text', '#easy-clear']) {
+    $<HTMLButtonElement>(id).addEventListener('click', () => {
+      settings.text = '';
+      onSettingChanged('text');
+      textArea().focus();
+    });
+  }
 
   $<HTMLButtonElement>('#reset-all').addEventListener('click', () => {
     const keep = settings.text;
@@ -378,7 +399,7 @@ function bindControls(): void {
     });
   }
 
-  for (const id of ['#import-file', '#import-text']) {
+  for (const id of ['#import-file', '#import-text', '#easy-import']) {
     $<HTMLInputElement>(id).addEventListener('change', async (e) => {
       const input = e.target as HTMLInputElement;
       const file = input.files?.[0];
@@ -446,7 +467,7 @@ function bindAdvanced(): void {
   const apply = () => {
     panel.classList.toggle('simple', !shown);
     button.setAttribute('aria-pressed', String(shown));
-    button.textContent = shown ? 'Fewer settings' : 'All settings';
+    button.textContent = shown ? 'Simple view' : 'More options';
     renderPreview();
   };
   button.addEventListener('click', () => {
@@ -504,6 +525,144 @@ function buildPresets(): void {
   }
 }
 
+// ---------------------------------------------------------------- simple view
+
+/** Hands offered in the simple view, most natural first. */
+const EASY_HANDS = [
+  'caveat',
+  'kalam',
+  'patrick-hand',
+  'covered-by-your-grace',
+  'reenie-beanie',
+  'indie-flower',
+  'shadows-into-light',
+  'homemade-apple',
+  'dawning-of-a-new-day',
+];
+
+/** Papers offered in the simple view, with names short enough for a chip. */
+const EASY_PAPERS: [string, string][] = [
+  ['notebook', 'Notebook'],
+  ['college', 'College'],
+  ['exam', 'Exam sheet'],
+  ['plain', 'Plain'],
+  ['graph', 'Graph'],
+  ['legal-pad', 'Legal pad'],
+];
+
+const LOOK_TEXT = 'Monday, 12 March\n\nThe mitochondrion releases energy from glucose in small, controlled steps.';
+
+/** Fill the simple view: the looks, the hands and the papers. */
+function buildEasy(): void {
+  const looks = $<HTMLDivElement>('#easy-looks');
+  looks.replaceChildren();
+  const pending: [HTMLCanvasElement, Settings][] = [];
+  for (const preset of PRESETS.slice(0, MAIN_LOOKS)) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'look';
+    card.dataset.look = preset.id;
+    const canvas = document.createElement('canvas');
+    const name = document.createElement('span');
+    name.textContent = preset.label;
+    const note = document.createElement('small');
+    note.textContent = preset.note;
+    card.append(canvas, name, note);
+    card.addEventListener('click', () => {
+      applyPreset(settings, preset);
+      onSettingChanged('preset');
+    });
+    looks.append(card);
+    const sample = structuredClone(settings);
+    applyPreset(sample, preset);
+    pending.push([canvas, sample]);
+  }
+  // Each card is a real page in that look, drawn once the main page is up.
+  void (async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    for (const [canvas, sample] of pending) {
+      try {
+        await drawLookSample(canvas, sample, LOOK_TEXT, 170, 102);
+      } catch (err) {
+        console.warn('Could not draw a look', err);
+      }
+    }
+  })();
+
+  buildEasyHands();
+
+  const papers = $<HTMLDivElement>('#easy-papers');
+  papers.replaceChildren();
+  for (const [id, short] of EASY_PAPERS) {
+    const template = PAPER_TEMPLATES.find((t) => t.id === id);
+    if (!template) continue;
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.dataset.template = id;
+    chip.title = `${template.label}: ${template.note}`;
+    const canvas = document.createElement('canvas');
+    const name = document.createElement('small');
+    name.textContent = short;
+    chip.append(canvas, name);
+    chip.addEventListener('click', () => {
+      applyTemplate(settings, id);
+      onSettingChanged('template');
+    });
+    papers.append(chip);
+    drawPaperOnly(canvas, applyTemplate(structuredClone(settings), id), 128);
+  }
+}
+
+/** The handwriting chips: your own hands first, then the bundled ones. */
+function buildEasyHands(): void {
+  const box = $<HTMLDivElement>('#easy-hands');
+  box.replaceChildren();
+  const fonts = allFonts();
+  const offered = [...fonts.filter((f) => f.hand), ...EASY_HANDS.map((id) => fonts.find((f) => f.id === id)).filter((f): f is FontEntry => !!f)];
+  void loadFontCss(offered.filter((f) => !f.hand).map((f) => f.family));
+  for (const font of offered) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.dataset.font = font.id;
+    chip.title = font.note;
+    if (font.hand) {
+      const canvas = document.createElement('canvas');
+      drawHandSample(canvas, font.hand, sampleWords(font.hand));
+      chip.append(canvas);
+    } else {
+      const face = document.createElement('span');
+      face.className = 'face';
+      face.style.fontFamily = `"${font.family}", cursive`;
+      face.textContent = 'Hello';
+      chip.append(face);
+    }
+    const name = document.createElement('small');
+    name.textContent = font.label;
+    chip.append(name);
+    chip.addEventListener('click', () => {
+      settings.fontId = font.id;
+      onSettingChanged('fontId');
+    });
+    box.append(chip);
+  }
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'chip';
+  more.innerHTML = '<span class="face">…</span><small>More hands</small>';
+  more.addEventListener('click', () => {
+    $<HTMLButtonElement>('#toggle-advanced').click();
+    $<HTMLButtonElement>('#tab-hand').click();
+  });
+  box.append(more);
+}
+
+/** The text box in view: the simple view's, or the Text tab's. */
+function textArea(): HTMLTextAreaElement {
+  return $<HTMLElement>('.panel').classList.contains('simple') ? $<HTMLTextAreaElement>('#easy-text') : $<HTMLTextAreaElement>('#text');
+}
+
 /** The paper gallery shows a real render of each template, not a drawing of one. */
 function buildTemplates(): void {
   const box = $<HTMLDivElement>('#templates');
@@ -550,6 +709,7 @@ function refreshHands(): void {
   ownHands = loadHands().map(buildHand);
   setOwnHands(ownHands);
   renderOwnHands();
+  if (document.querySelector('#easy-hands .chip')) buildEasyHands();
 }
 
 function openHand(id: string | null): void {
@@ -799,7 +959,7 @@ async function addDiagram(file: File): Promise<void> {
 
 /** Insert markup at the caret, or at the end when the writer is elsewhere. */
 function insertAtCursor(markup: string): void {
-  const area = $<HTMLTextAreaElement>('#text');
+  const area = textArea();
   const at = document.activeElement === area ? area.selectionStart : settings.text.length;
   const before = settings.text.slice(0, at).replace(/\n+$/, '');
   const after = settings.text.slice(at).replace(/^\n+/, '');
@@ -876,6 +1036,7 @@ function renderPreview(): void {
   preview.style.height = `${Math.round((cssWidth * geometry.height) / geometry.width)}px`;
 
   pageLabel.textContent = `Page ${pageIndex + 1} of ${pages.length}`;
+  $<HTMLSpanElement>('#easy-pages').textContent = `${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`;
   $<HTMLButtonElement>('#prev-page').disabled = pageIndex === 0;
   $<HTMLButtonElement>('#next-page').disabled = pageIndex >= pages.length - 1;
   preview.setAttribute('aria-label', `Handwritten preview, page ${pageIndex + 1} of ${pages.length}`);
@@ -1050,9 +1211,26 @@ async function runExport(kind: 'pdf' | 'png'): Promise<void> {
   if (exporting) return;
   exporting = true;
   exportAbort = new AbortController();
-  const buttons = [$<HTMLButtonElement>('#export-pdf'), $<HTMLButtonElement>('#export-png')];
-  const progress = $<HTMLProgressElement>('#export-progress');
-  const status = $<HTMLParagraphElement>('#export-status');
+  const buttons = ['#export-pdf', '#export-png', '#easy-pdf', '#easy-png', '#quick-pdf'].map((id) => $<HTMLButtonElement>(id));
+  // Progress shows in the Save tab and in the simple view alike.
+  const bars = [$<HTMLProgressElement>('#export-progress'), $<HTMLProgressElement>('#easy-progress')];
+  const statuses = [$<HTMLParagraphElement>('#export-status'), $<HTMLParagraphElement>('#easy-status')];
+  const status = {
+    set textContent(text: string) {
+      for (const el of statuses) el.textContent = text;
+    },
+    get textContent(): string {
+      return statuses[0].textContent ?? '';
+    },
+  };
+  const progress = {
+    set value(v: number) {
+      for (const bar of bars) bar.value = v;
+    },
+    set hidden(on: boolean) {
+      for (const bar of bars) bar.hidden = on;
+    },
+  };
   const cancel = $<HTMLButtonElement>('#cancel-export');
   buttons.forEach((b) => (b.disabled = true));
   cancel.hidden = false;

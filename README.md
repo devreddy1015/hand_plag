@@ -49,6 +49,11 @@ pictures and pictures you drag in are traced the same way. Photographs stay phot
 stuck on as prints, because no one draws a micrograph by hand. **Draw a diagram** opens a
 sheet to sketch your own.
 
+**Opens simple.** Three steps: your text (typed, pasted, or a PDF or Word file), a look
+(six ready-made ones, each card a real preview), and Download. Handwriting, paper, pen,
+ink, how the page was handed in, and how neat the hand is sit under the looks; every other
+setting is one click away under **More options**.
+
 **Writes it by hand.** 19 handwriting fonts, your own uploaded font — or, best of all,
 **your own handwriting**: write each letter three times on the pad with a finger, a stylus
 or the mouse, and the page is written in your hand, drawn back stroke by stroke with the
@@ -57,6 +62,11 @@ works too: letters not written yet are borrowed from a print hand, scaled to mat
 are kept in the browser and can be saved to a file. The layout engine is built around how
 people actually write, not how a typesetter sets type:
 
+- Letters are written with a pen, not filled in. Each letter of a font is drawn large and
+  thinned back to the line through the middle of every stroke — the path the pen took —
+  and that line is written with the chosen pen: thin, as a ballpoint line is, tapering where
+  the pen touches down and lifts off, heavier on down-strokes, darker where two strokes
+  cross, with now and then a bead of ink where the pen landed.
 - No two copies of a letter are the same. A font draws every "e" identically; here each one
   is bent before it is drawn — the ascender a little taller, the bowl a little wider, the
   loop closing somewhere else — in two layers, as in a real hand: a few habitual forms of
@@ -93,8 +103,12 @@ down unevenly, as it does on paper, bleeds into the paper, dries darker at the e
 gel or fountain-pen stroke, pools where the pen is set down, and pencil is broken up by the
 tooth of the paper.
 
-**Handed over how you like.** Flat art, a flatbed scan (crooked, uneven lamp, sensor
-noise), or a photo on a desk (keystoned, lit from one side, casting a shadow). Export a
+**Handed over how you like.** A phone-app scan, the way most homework is handed in — the
+paper pushed to white, the ink to deep and saturated, the sheet still bowed, a sliver of
+desk at one edge and the phone's shadow across a corner — which is how a page first looks.
+Or a flatbed scan (crooked on the glass, grey cast, shade along the binding), a photo on a
+desk (keystoned, bowed, warm light, the hand's shadow, grain, wood or table beneath), or
+the flat page. Export a
 multi-page PDF or PNG/JPEG images at 150–400 DPI, all pages or a range. The PDF carries
 its title and nothing else: no creator or producer stamp.
 
@@ -145,6 +159,8 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 | `src/engine/shapes.ts` | Letter outlines and the two-layer bend (habitual form, and this copy) that keeps any two copies of a letter from matching. |
 | `src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. |
 | `src/engine/symbols.ts` | Greek letters and mathematical signs as pen strokes, fitted to the hand they are written in. |
+| `src/engine/finish.ts` | How the page was captured: phone-app scan, flatbed scan or photo — bowed paper, uneven light, shadows, enhancement and grain. |
+| `src/strokefont.ts` | Turns each letter of a font into the pen strokes it was drawn with, by thinning it to its centre line. |
 | `src/engine/sketch.ts` | Drawing a traced diagram by hand: bowed, unsteady lines, overshooting corners, closing overlaps, hatching per colour. |
 | `src/engine/paper.ts` | Paper sizes, page geometry, printed furniture and the procedural paper texture. |
 | `src/engine/templates.ts` | The paper templates and the features each one turns on. |

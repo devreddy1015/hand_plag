@@ -162,3 +162,28 @@ describe('simplify', () => {
     expect(simplify(pts, 0.5, false)).toEqual([0, 0, 10, 0, 10, 10]);
   });
 });
+
+describe('tracing a letter', () => {
+  it('keeps a bold stroke as a line, not a shaded area, when told there are no solids', () => {
+    const c = canvas(160, 160);
+    c.rect(70, 20, 18, 120);
+    const shaded = vectorize(c.lum, c.width, c.height)!;
+    expect(shaded.fills.length).toBeGreaterThan(0);
+    const traced = vectorize(c.lum, c.width, c.height, null, { solids: false, spurWidths: 0.7, extendEnds: true })!;
+    expect(traced.fills).toHaveLength(0);
+    expect(traced.paths).toHaveLength(1);
+  });
+
+  it('puts back the ends that thinning takes off', () => {
+    const c = canvas(200, 60);
+    c.line(30, 30, 170, 30, 9);
+    const plain = vectorize(c.lum, c.width, c.height, null, { solids: false })!;
+    const extended = vectorize(c.lum, c.width, c.height, null, { solids: false, extendEnds: true })!;
+    const xs = (v: typeof plain) => v.paths[0].pts.filter((_, k) => k % 2 === 0);
+    expect(Math.min(...xs(extended))).toBeLessThan(Math.min(...xs(plain)));
+    expect(Math.max(...xs(extended))).toBeGreaterThan(Math.max(...xs(plain)));
+    // ...and no further than the ink itself reached.
+    expect(Math.min(...xs(extended))).toBeGreaterThan(22);
+    expect(Math.max(...xs(extended))).toBeLessThan(178);
+  });
+});

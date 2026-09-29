@@ -13,10 +13,10 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFPageProxy, TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { Sketch, SketchLabel } from '../engine';
-import { absorbText, findFigureBoxes, growToInk, roomAround, type Box } from './figures';
-import { findMathBlocks, isDrawingFont, isMathFont } from './math';
+import { absorbText, clearFrames, findFigureBoxes, findTables, growToInk, roomAround, type Box } from './figures';
+import { findMathBlocks, isBoldFont, isDrawingFont, isMathFont } from './math';
 import { looksLikeLineArt, luminance, vectorize } from './vectorize';
-import { buildLines, reconstruct, DEFAULT_PDF_OPTIONS, type Line, type PageFigure, type PageLines, type PdfOptions, type TextRun } from './reflow';
+import { buildLines, placeAccents, reconstruct, DEFAULT_PDF_OPTIONS, type Line, type PageFigure, type PageLines, type PdfOptions, type TextRun } from './reflow';
 import type { ImportedImage, Importer } from './shared';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -56,6 +56,7 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
       // picture, not words to write.
       const runs = all.filter((run) => !run.drawing);
       const lines = buildLines(runs, viewport.height, viewport.width);
+      markBrokenMaths(lines, all, viewport.height);
       const entry: PageLines = { index: i - 1, width: viewport.width, height: viewport.height, lines };
       if (opts.diagrams) {
         try {
@@ -92,6 +93,25 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
 interface KindedRun extends TextRun {
   /** Set in a font that only draws (arrowheads, big brackets): part of a picture. */
   drawing: boolean;
+  /** Set in TeX's extension font: integral signs, big sums, tall brackets. */
+  operator: boolean;
+}
+
+/**
+ * An integral sign or a big bracket in the middle of a sentence was drawn, not
+ * written, so it is missing from the words read back: "along path (1): v · dl
+ * = 11" has lost its ∫. Such a line has to be copied out as it stands.
+ */
+function markBrokenMaths(lines: Line[], runs: KindedRun[], pageHeight: number): void {
+  for (const run of runs) {
+    if (!run.operator || !run.transform || run.str.trim() === '') continue;
+    const x = run.transform[4];
+    const y = pageHeight - run.transform[5];
+    for (const line of lines) {
+      if (x < line.x0 - line.size || x > line.x1 + line.size) continue;
+      if (Math.abs(line.y - y) < line.size * 1.5) line.broken = true;
+    }
+  }
 }
 
 /**
@@ -103,7 +123,7 @@ interface KindedRun extends TextRun {
  */
 async function withFontKinds(page: PDFPageProxy, items: TextItem[]): Promise<KindedRun[]> {
   await page.getOperatorList();
-  const known = new Map<string, { math: boolean; drawing: boolean }>();
+  const known = new Map<string, { math: boolean; drawing: boolean; bold: boolean; operator: boolean }>();
   const kind = (id: string) => {
     let answer = known.get(id);
     if (answer === undefined) {
@@ -114,7 +134,12 @@ async function withFontKinds(page: PDFPageProxy, items: TextItem[]): Promise<Kin
       } catch {
         name = undefined;
       }
-      answer = { math: isMathFont(name), drawing: isDrawingFont(name) };
+      answer = {
+        math: isMathFont(name),
+        drawing: isDrawingFont(name),
+        bold: isBoldFont(name),
+        operator: /CMEX|ESINT|MathExtension/i.test(name ?? ''),
+      };
       known.set(id, answer);
     }
     return answer;
@@ -156,6 +181,35 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
   const grid = drawnCells(ctx.getImageData(0, 0, width, height).data, width, height, cols, rows);
   const placed = runs.map((run) => runBox(run, entry.height)).filter((b): b is RunBox => b !== null);
   maskText(grid, cols, rows, placed);
+  // Boxes drawn round the writing are not figures, however big they are.
+  const frames = clearFrames(
+    grid,
+    cols,
+    rows,
+    CELL,
+    entry.lines.map((line) => ({
+      x: line.x0 * PX_PER_PT,
+      y: (line.y - line.size) * PX_PER_PT,
+      width: (line.x1 - line.x0) * PX_PER_PT,
+      height: line.size * 1.3 * PX_PER_PT,
+    })),
+  );
+  // Displayed equations are cut out on their own. Their rules, roots and big
+  // brackets are drawing too, and left in they join up with each other and
+  // with any diagram nearby into one "figure" full of sentences.
+  for (const box of maths.boxes) {
+    const pad = bodySize * 0.3;
+    maskBox(grid, cols, rows, (box.x - pad) * PX_PER_PT, (box.y - pad) * PX_PER_PT, (box.x + box.width + pad) * PX_PER_PT, (box.y + box.height + pad) * PX_PER_PT);
+  }
+  // Tables are copied out whole, rules and all, like a figure.
+  const tables = findTables(
+    entry.lines.filter((line) => !maths.consumed.has(line)),
+    bodySize,
+  );
+  const tableBoxes = tables.boxes.map((box) => growToInk(box, inkReader(ctx, width, height), roomAround(box, entry.lines, tables.consumed, bodySize)));
+  for (const box of tableBoxes) {
+    maskBox(grid, cols, rows, box.x * PX_PER_PT, box.y * PX_PER_PT, (box.x + box.width) * PX_PER_PT, (box.y + box.height) * PX_PER_PT);
+  }
 
   const minSize = MIN_FIGURE_MM * (FIGURE_DPI / 25.4);
   const boxesPx = findFigureBoxes(grid, cols, rows, {
@@ -173,7 +227,14 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
     width: b.width / PX_PER_PT,
     height: b.height / PX_PER_PT,
   }));
-  const { figures, consumed } = absorbText(inPoints, entry.lines, bodySize, measureOf(entry.lines));
+  const { figures, consumed } = absorbText(
+    inPoints,
+    entry.lines.filter((line) => !tables.consumed.has(line)),
+    bodySize,
+    measureOf(entry.lines),
+  );
+  for (const box of tableBoxes) figures.push({ box, caption: '' });
+  for (const line of tables.consumed) consumed.add(line);
 
   // An equation drawn inside a figure is part of that figure, not a second one.
   const equations = maths.boxes
@@ -189,6 +250,7 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
 
   for (const line of maths.consumed) consumed.add(line);
   if (consumed.size > 0) entry.lines = entry.lines.filter((line) => !consumed.has(line));
+  setOnFrameMargins(entry.lines, frames);
 
   const out: PageFigure[] = [];
   all.forEach((figure, n) => {
@@ -284,6 +346,10 @@ function traceCrop(ctx: CanvasRenderingContext2D, crop: Crop, labels: RunBox[]):
   const traced = vectorize(lum, crop.w, crop.h, ignore, {}, data);
   if (!traced) return null;
   const k = 1 / crop.w;
+  // A hat set over a letter is part of the letter, not a label of its own.
+  const pieces = labels.map((run) => ({ x: run.x, width: run.width, str: run.text, y: run.y, size: run.size }));
+  placeAccents(pieces);
+  labels = labels.map((run, i) => ({ ...run, text: pieces[i].str })).filter((run) => run.text.trim() !== '');
   const sketchLabels: SketchLabel[] = labels.map((run) => ({
     text: run.text,
     x: (run.x - crop.x) * k,
@@ -395,14 +461,38 @@ function maskText(grid: Uint8Array, cols: number, rows: number, runs: RunBox[]):
     // Tight to the run itself, so a line passing close by — the shaft of an
     // arrow between two labelled boxes — is not wiped out with it.
     const pad = Math.max(1, run.size * 0.08);
-    const x0 = (run.x - pad) / CELL;
-    const x1 = (run.x + run.width + pad) / CELL;
-    const y0 = (run.y - run.size * 0.8 - pad) / CELL;
-    const y1 = (run.y + run.size * 0.25 + pad) / CELL;
-    for (let r = Math.max(0, Math.floor(y0)); r <= Math.min(rows - 1, Math.floor(y1)); r++) {
-      for (let c = Math.max(0, Math.floor(x0)); c <= Math.min(cols - 1, Math.floor(x1)); c++) {
-        grid[r * cols + c] = 0;
-      }
+    maskBox(grid, cols, rows, run.x - pad, run.y - run.size * 0.8 - pad, run.x + run.width + pad, run.y + run.size * 0.25 + pad);
+  }
+}
+
+/** Clear the cells under a rectangle given in rendered pixels. */
+function maskBox(grid: Uint8Array, cols: number, rows: number, x0: number, y0: number, x1: number, y1: number): void {
+  for (let r = Math.max(0, Math.floor(y0 / CELL)); r <= Math.min(rows - 1, Math.floor(y1 / CELL)); r++) {
+    for (let c = Math.max(0, Math.floor(x0 / CELL)); c <= Math.min(cols - 1, Math.floor(x1 / CELL)); c++) {
+      grid[r * cols + c] = 0;
+    }
+  }
+}
+
+/**
+ * Text in a box is set on the box's own margin, a little in from the page's.
+ * Measured from the page it would all look indented — a quotation, or a list
+ * whose bullets were drawn — so move each box's lines back out to the margin
+ * the box stands on. Frames are in rendered pixels.
+ */
+function setOnFrameMargins(lines: Line[], frames: Box[]): void {
+  for (const frame of frames) {
+    const left = frame.x / PX_PER_PT;
+    const top = frame.y / PX_PER_PT;
+    const bottom = (frame.y + frame.height) / PX_PER_PT;
+    const right = (frame.x + frame.width) / PX_PER_PT;
+    const inside = lines.filter((line) => line.y > top && line.y < bottom && line.x0 >= left && line.x1 <= right + 1);
+    if (inside.length === 0) continue;
+    const shift = Math.min(...inside.map((line) => line.x0)) - left;
+    if (shift <= 0) continue;
+    for (const line of inside) {
+      line.x0 -= shift;
+      line.x1 -= shift;
     }
   }
 }

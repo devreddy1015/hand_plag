@@ -33,6 +33,8 @@ export interface TextRun {
   height: number;
   /** Set when the run is drawn in a font only used for mathematics. */
   math?: boolean;
+  /** Set when the run is drawn in a bold face. */
+  bold?: boolean;
 }
 
 export interface Line {
@@ -46,6 +48,14 @@ export interface Line {
   column: number;
   /** Share of the line, by length, set in a mathematics font. */
   math: number;
+  /** Share of the line, by length, set in bold. */
+  bold?: number;
+  /**
+   * The line holds maths that cannot be read back as text: a fraction set
+   * inline, with its numerator over its denominator, or an integral sign
+   * drawn rather than written. It has to be copied out as it stands.
+   */
+  broken?: boolean;
 }
 
 /** A figure found on the page, ready to be written into the flow. */
@@ -82,6 +92,7 @@ interface Run {
   size: number;
   str: string;
   math: boolean;
+  bold: boolean;
 }
 
 /**
@@ -100,7 +111,7 @@ export function buildLines(items: TextRun[], pageHeight: number, pageWidth: numb
     // Skip text turned on its side: page furniture, watermarks, figure labels.
     if (Math.abs(t[1]) > Math.abs(t[0]) * 0.35 + 0.01) continue;
     const size = Math.max(Math.hypot(t[2], t[3]), item.height || 0) || 10;
-    runs.push({ y: pageHeight - t[5], x: t[4], width: item.width, size, str: item.str, math: item.math === true });
+    runs.push({ y: pageHeight - t[5], x: t[4], width: item.width, size, str: item.str, math: item.math === true, bold: item.bold === true });
   }
   if (runs.length === 0) return [];
 
@@ -108,18 +119,22 @@ export function buildLines(items: TextRun[], pageHeight: number, pageWidth: numb
   const typical = sizes[Math.floor(sizes.length / 2)];
 
   const gutter = findGutter(runs, pageWidth);
-  if (gutter === null) return groupRuns(runs, typical, 0);
+  // Words this far apart on one baseline are not one line of text: a figure's
+  // label beside a paragraph, the two halves of a running head, a page number
+  // at the end of a contents entry.
+  const apart = Math.max(typical * 3, pageWidth * 0.05);
+  if (gutter === null) return groupRuns(runs, typical, 0, apart);
 
   const left = runs.filter((r) => r.x + r.width <= gutter + 1);
   const right = runs.filter((r) => r.x >= gutter - 1);
   const wide = runs.filter((r) => r.x < gutter - 1 && r.x + r.width > gutter + 1);
-  if (left.length < runs.length * 0.15 || right.length < runs.length * 0.15) return groupRuns(runs, typical, 0);
+  if (left.length < runs.length * 0.15 || right.length < runs.length * 0.15) return groupRuns(runs, typical, 0, apart);
 
-  return orderColumns([...groupRuns(left, typical, 0), ...groupRuns(right, typical, 1), ...groupRuns(wide, typical, -1)]);
+  return orderColumns([...groupRuns(left, typical, 0, apart), ...groupRuns(right, typical, 1, apart), ...groupRuns(wide, typical, -1, apart)]);
 }
 
 /** Runs that share a baseline become one line, read left to right. */
-function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
+function groupRuns(runs: Run[], typicalSize: number, column: number, apart = Infinity): Line[] {
   if (runs.length === 0) return [];
   const tolerance = Math.max(1.2, typicalSize * 0.45);
   const sorted = [...runs].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -130,43 +145,18 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
   const flush = () => {
     if (bucket.length === 0) return;
     bucket.sort((a, b) => a.x - b.x);
-    // The line's own type: the run with the most characters in it. Anything
-    // markedly smaller and off its baseline is a superscript or subscript —
-    // a footnote mark, a power, the 2 of CO2 — and is kept as one.
-    let main = bucket[0];
-    for (const run of bucket) if (run.str.trim().length > main.str.trim().length) main = run;
-    let text = '';
-    let cursor = -Infinity;
-    let size = 0;
-    let mathChars = 0;
-    let allChars = 0;
-    for (const run of bucket) {
-      const gap = run.x - cursor;
-      const script = run !== main && run.size < main.size * 0.86 && Math.abs(run.y - main.y) > main.size * 0.1 && run.str.trim() !== '';
-      if (script) {
-        text += `${run.y < main.y ? '^' : '_'}{${run.str.trim()}}`;
-      } else {
-        if (text !== '' && gap > run.size * 0.18 && !/\s$/.test(text) && !/^\s/.test(run.str)) text += ' ';
-        text += run.str;
+    placeAccents(bucket);
+    let from = 0;
+    let reach = bucket[0].x + bucket[0].width;
+    for (let i = 1; i <= bucket.length; i++) {
+      if (i < bucket.length && bucket[i].x - reach <= apart) {
+        reach = Math.max(reach, bucket[i].x + bucket[i].width);
+        continue;
       }
-      cursor = run.x + run.width;
-      size = Math.max(size, script ? 0 : run.size);
-      const length = run.str.trim().length;
-      allChars += length;
-      if (run.math) mathChars += length;
-    }
-    const trimmed = cleanText(text);
-    if (trimmed !== '') {
-      lines.push({
-        // The baseline of the line's own type, not pulled about by its scripts.
-        y: main.y,
-        x0: bucket[0].x,
-        x1: cursor,
-        size,
-        text: trimmed,
-        column,
-        math: allChars > 0 ? mathChars / allChars : 0,
-      });
+      const line = lineOf(bucket.slice(from, i), column);
+      if (line) lines.push(line);
+      if (i < bucket.length) reach = bucket[i].x + bucket[i].width;
+      from = i;
     }
     bucket = [];
   };
@@ -187,6 +177,137 @@ function groupRuns(runs: Run[], typicalSize: number, column: number): Line[] {
   }
   flush();
   return lines;
+}
+
+/** One line from runs on one baseline, already in order from left to right. */
+function lineOf(bucket: Run[], column: number): Line | null {
+  // The line's own type: the run with the most characters in it. Anything
+  // markedly smaller and off its baseline is a superscript or subscript —
+  // a footnote mark, a power, the 2 of CO2 — and is kept as one.
+  let main = bucket[0];
+  for (const run of bucket) if (run.str.trim().length > main.str.trim().length) main = run;
+  let text = '';
+  let cursor = -Infinity;
+  let size = 0;
+  let mathChars = 0;
+  let boldChars = 0;
+  let allChars = 0;
+  /** The kind of script just written, so a power set in two pieces stays one. */
+  let lastScript = '';
+  const raised: Run[] = [];
+  const dropped: Run[] = [];
+  for (const run of bucket) {
+    if (run.str === '') continue;
+    const gap = run.x - cursor;
+    const script = run !== main && run.size < main.size * 0.86 && Math.abs(run.y - main.y) > main.size * 0.1 && run.str.trim() !== '';
+    if (script) {
+      const kind = run.y < main.y ? '^' : '_';
+      (kind === '^' ? raised : dropped).push(run);
+      if (kind === lastScript && gap < run.size * 0.3) text = `${text.slice(0, -1)}${run.str.trim()}}`;
+      else text += `${kind}{${run.str.trim()}}`;
+      lastScript = kind;
+    } else {
+      lastScript = '';
+      if (text !== '' && gap > run.size * 0.18 && !/\s$/.test(text) && !/^[\s\u0300-\u036f]/.test(run.str)) text += ' ';
+      text += run.str;
+    }
+    cursor = run.x + run.width;
+    size = Math.max(size, script ? 0 : run.size);
+    const length = run.str.trim().length;
+    allChars += length;
+    if (run.math) mathChars += length;
+    if (run.bold) boldChars += length;
+  }
+  const trimmed = cleanText(text);
+  if (trimmed === '') return null;
+  // A numerator standing over a denominator is a fraction, not a power
+  // followed by an index.
+  const stacked = raised.some((up) =>
+    dropped.some((down) => Math.min(up.x + up.width, down.x + down.width) - Math.max(up.x, down.x) > Math.min(up.width, down.width) * 0.3),
+  );
+  return {
+    broken: stacked || undefined,
+    // The baseline of the line's own type, not pulled about by its scripts.
+    y: main.y,
+    x0: bucket[0].x,
+    x1: cursor,
+    size,
+    text: trimmed,
+    column,
+    math: allChars > 0 ? mathChars / allChars : 0,
+    bold: allChars > 0 ? boldChars / allChars : 0,
+  };
+}
+
+/** Spacing accents, and the combining marks they stand for. */
+const ACCENTS: Record<string, string> = {
+  '\u02c6': '\u0302',
+  '\u02dc': '\u0303',
+  '\u00af': '\u0304',
+  '\u02c9': '\u0304',
+  '\u02d9': '\u0307',
+  '\u00a8': '\u0308',
+  '\u00b4': '\u0301',
+  '\u02c7': '\u030c',
+  '\u02d8': '\u0306',
+  '\u02da': '\u030a',
+};
+
+/**
+ * Put accents back on their letters. TeX sets the hat of a unit vector as a
+ * glyph of its own, placed over the letter, so read in order it lands beside
+ * the letter — "nˆ" or "ˆn" — rather than on it. Each spacing accent is
+ * joined, as a combining mark, to the letter it stands over.
+ */
+export function placeAccents(bucket: { x: number; width: number; str: string; y?: number; size?: number }[]): void {
+  interface Char {
+    run: number;
+    index: number;
+    ch: string;
+    mid: number;
+    x0: number;
+    x1: number;
+  }
+  const chars: Char[][] = bucket.map((run, r) => {
+    const points = [...run.str];
+    const step = run.width / Math.max(1, points.length);
+    return points.map((ch, index) => ({ run: r, index, ch, x0: run.x + step * index, x1: run.x + step * (index + 1), mid: run.x + step * (index + 0.5) }));
+  });
+  const flat = chars.flat();
+  if (!flat.some((c) => ACCENTS[c.ch] !== undefined)) return;
+  const letter = (c: Char) => /[\p{L}\p{N}]/u.test(c.ch);
+  const marks = new Map<Char, string>();
+  const dropped = new Set<Char>();
+  for (const c of flat) {
+    const mark = ACCENTS[c.ch];
+    if (mark === undefined) continue;
+    // The letter beneath: in another run, under the middle of the accent.
+    let base: Char | undefined;
+    let best = Infinity;
+    const at = bucket[c.run];
+    for (const o of flat) {
+      if (o.run === c.run || !letter(o)) continue;
+      // Pieces from all over a figure: the letter must be on the accent's own line.
+      const under = bucket[o.run];
+      if (at.y !== undefined && under.y !== undefined && Math.abs(at.y - under.y) > (under.size ?? Infinity) * 0.9) continue;
+      const slack = (o.x1 - o.x0) * 0.35;
+      if (c.mid < o.x0 - slack || c.mid > o.x1 + slack) continue;
+      const d = Math.abs(o.mid - c.mid);
+      if (d < best) {
+        best = d;
+        base = o;
+      }
+    }
+    // Failing that, the letter right after it in its own run.
+    if (!base) base = chars[c.run].find((o) => o.index === c.index + 1 && letter(o));
+    if (!base || marks.has(base)) continue;
+    marks.set(base, mark);
+    dropped.add(c);
+  }
+  if (dropped.size === 0) return;
+  bucket.forEach((run, r) => {
+    run.str = chars[r].map((c) => (dropped.has(c) ? '' : c.ch + (marks.get(c) ?? ''))).join('');
+  });
 }
 
 /**
@@ -267,6 +388,10 @@ export function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
     pages.length < 3 ? new Set<string>() : new Set([...counts.entries()].filter(([, n]) => n >= threshold).map(([k]) => k));
   let removed = 0;
   for (const page of pages) {
+    // A running head often has a fixed half and a half that changes with the
+    // chapter ("Study Notes ... Vector Analysis"). Once the fixed half shows it
+    // is a running head, whatever shares its baseline goes with it.
+    const heads = page.lines.filter((line) => inMargin(line, page) && repeated.has(key(line))).map((line) => line.y);
     page.lines = page.lines.filter((line) => {
       if (!inMargin(line, page)) return true;
       // A bare number in the margin is a page number whether it repeats or not.
@@ -274,7 +399,7 @@ export function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
         removed++;
         return false;
       }
-      if (repeated.has(key(line))) {
+      if (repeated.has(key(line)) || heads.some((y) => Math.abs(y - line.y) < line.size * 0.5)) {
         removed++;
         return false;
       }
@@ -290,7 +415,7 @@ function inMargin(line: Line, page: PageLines): boolean {
 
 /** One block of the rebuilt document, before it is written out as text. */
 interface OutBlock {
-  kind: 'paragraph' | 'heading' | 'list' | 'pagebreak' | 'image';
+  kind: 'paragraph' | 'heading' | 'list' | 'pagebreak' | 'image' | 'toc';
   text: string;
   /** Image blocks: the key of the picture. */
   src?: string;
@@ -365,6 +490,9 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
     }
     previousOnThisPage = false;
     const figures = [...(page.figures ?? [])].sort((a, b) => a.top - b.top);
+    // A contents page: its entries are lines of their own, and the page
+    // numbers they point to belong to the printed document, not this one.
+    const contents = page.lines.filter((line) => LEADER.test(line.text)).length >= 3;
     let nextFigure = 0;
     const writeFigure = () => {
       const figure = figures[nextFigure++];
@@ -382,15 +510,46 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
       const caps = line.text.length > 2 && line.text === line.text.toUpperCase() && /[A-Z]{2}/.test(line.text);
       const airAbove = gapAbove === null || gapAbove > lineGap * 1.25;
 
+      if (contents && ratio < 1.12) {
+        // The number at the end of an entry, pushed out to the margin.
+        if (/^\d{1,4}$/.test(line.text) && previous !== null && previousOnThisPage && Math.abs(previous.y - line.y) < line.size * 0.5) continue;
+        const entry = line.text.replace(LEADER, '').replace(/\s+\d{1,4}$/, '').trim();
+        const depth = Math.max(0, Math.round((line.x0 - bodyLeft) / (bodySize * 1.5)));
+        emit({ kind: 'toc', text: entry, indent: line.x0, level: depth });
+        previous = line;
+        previousOnThisPage = true;
+        continue;
+      }
+
       // Headings: bigger type, a line shouted in capitals, or a short line in
       // slightly larger type standing on its own with space above it.
+      // A line set wholly in bold, standing on its own, is a heading at body
+      // size: "Q3. Define the del operator." at the top of a box.
+      const boldLine =
+        (line.bold ?? 0) >= 0.9 && ratio >= 0.95 && words >= 2 && line.math < 0.3 && (airAbove || prevShort || previous === null) && !/[,;]$/.test(line.text);
       if (
         opts.detectHeadings &&
         words <= 18 &&
-        (ratio >= 1.12 || (caps && short && ratio >= 0.95) || (ratio >= 1.03 && short && airAbove && !/[.!?,;]$/.test(line.text)))
+        (ratio >= 1.12 || boldLine || (caps && short && ratio >= 0.95) || (ratio >= 1.03 && short && airAbove && !/[.!?,;]$/.test(line.text)))
       ) {
         const level = ratio >= 1.45 ? 1 : ratio >= 1.2 ? 2 : 3;
-        emit({ kind: 'heading', text: stripTrailingDot(line.text), indent: line.x0, level });
+        // A heading too long for one line carries on under itself.
+        const last = blocks[blocks.length - 1];
+        if (
+          pending === null &&
+          last?.kind === 'heading' &&
+          last.level === level &&
+          previous !== null &&
+          previousOnThisPage &&
+          gapAbove !== null &&
+          gapAbove < lineGap * 1.3 &&
+          Math.abs(previous.size - line.size) < line.size * 0.05 &&
+          !/[.!?:]$/.test(previous.text)
+        ) {
+          last.text = stripTrailingDot(`${last.text} ${line.text}`);
+        } else {
+          emit({ kind: 'heading', text: stripTrailingDot(line.text), indent: line.x0, level });
+        }
         previous = line;
         previousOnThisPage = true;
         continue;
@@ -435,17 +594,23 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
   markIndentedLists(blocks, bodyLeft, bodySize);
 
   const out = blocks.map((b) => {
+    if (b.kind === 'toc') return `${'    '.repeat(Math.min(3, b.level))}${b.text}`;
     if (b.kind === 'heading') return `${'#'.repeat(Math.min(3, Math.max(1, b.level)))} ${b.text}`;
     if (b.kind === 'list') return `${b.marker} ${b.text}`;
     // Brackets inside a caption would close the markup early.
     if (b.kind === 'image') return `![${b.text.replace(/[[\]()]/g, ' ').trim()}](${b.src ?? ''})`;
     return b.text;
   });
+  // The entries of a contents list are written one under another.
   return out
-    .join('\n\n')
+    .map((text, i) => (i > 0 && blocks[i].kind === 'toc' && blocks[i - 1].kind === 'toc' ? `\n${text}` : `\n\n${text}`))
+    .join('')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+/** A contents entry's dot leader and the page number after it. */
+const LEADER = /\s*(?:\.\s?){4,}\s*\d{0,4}\s*$/;
 
 /**
  * Some PDFs draw list bullets as graphics rather than text, so all that is

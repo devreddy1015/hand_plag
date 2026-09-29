@@ -58,8 +58,20 @@ export function cleanText(input: string): string {
     .replace(/[\u2010\u2011]/g, '-')
     .replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, ' ')
     .replace(/[\u2028\u2029]/g, ' ')
+    // A glyph from a font with no character map comes out as a control code
+    // or a private-use point. Standing alone between words it is an ornament
+    // separating them — "Vector Analysis • Electrostatics" — so write a dot.
+    .replace(/(^|\s)[\x80-\x9f\ue000-\uf8ff](?=\s|$)/g, '$1\u2022')
     // Control characters, but keep tab and newline.
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+    // A grave accent TeX set before its letter: Amp`ere is Ampère.
+    .replace(/(\p{L})`(\p{Ll})/gu, (_, before: string, letter: string) => `${before}${`${letter}\u0300`.normalize('NFC')}`)
+    // TeX's degree sign is a small circle raised: 60◦ is 60°.
+    .replace(/(\d)\s?(?:\^\{\u25e6\}|\u25e6)/g, '$1\u00b0')
+    // A slash struck through a relation, set as two glyphs: ≠, ∉, ≢.
+    .replace(/\s*\u0338\s*=/g, ' \u2260')
+    .replace(/\s*\u0338\s*\u2208/g, ' \u2209')
+    .replace(/\s*\u0338\s*\u2261/g, ' \u2262')
     .replace(/ {2,}/g, ' ')
     .replace(/\s+([,.])/g, '$1');
   return text.trim();

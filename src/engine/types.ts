@@ -14,8 +14,8 @@ export type MarginRule = 'none' | 'single' | 'double' | 'box';
 /** Binding marks punched or drilled into the sheet. */
 export type Holes = 'none' | 'punch2' | 'punch3' | 'spiral';
 export type PageNumberMode = 'none' | 'printed' | 'handwritten';
-/** How the finished page is presented: flat art, a flatbed scan, or a phone photo. */
-export type FinishLook = 'none' | 'scan' | 'photo';
+/** How the finished page is presented: flat, a flatbed scan, a phone-app scan, or a photo on a desk. */
+export type FinishLook = 'none' | 'scan' | 'phone' | 'photo';
 
 /**
  * What a writer does with a diagram from the source document: copy it out in
@@ -131,6 +131,13 @@ export interface Settings {
   diagramFrame: boolean;
   /** Width of a diagram as a fraction of the writing column. */
   diagramScale: number;
+
+  /** The writer's name, written by hand at the top of the sheet. Empty leaves it off. */
+  writerName: string;
+  /** The writer's ID or roll number, written beside the name. Empty leaves it off. */
+  writerId: string;
+  /** Write the name and ID at the top of every sheet, not only the first. */
+  writerEveryPage: boolean;
 
   /** 0 = tidy, 1 = very messy. 0.5 is a natural default. */
   messiness: number;

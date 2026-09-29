@@ -250,6 +250,72 @@ export function symbolGlyph(unit: string, xHeight: number, capHeight = xHeight *
   return glyph;
 }
 
+/**
+ * Accents as the pen adds them after the letter: a hat on a unit vector, a
+ * bar on a mean, a dot for a time derivative, an arrow on a vector. Drawn
+ * about their own centre, with the foot of the mark at 0; `wide` marks span
+ * the whole letter.
+ */
+const MARKS: Record<string, { d: string; wide?: boolean }> = {
+  '\u0300': { d: 'M-0.05 -0.09 L0.03 0' },
+  '\u0301': { d: 'M-0.03 0 L0.05 -0.09' },
+  '\u0302': { d: 'M-0.1 0 L0 -0.1 L0.1 0' },
+  '\u0303': { d: 'M-0.11 -0.01 C-0.07 -0.08 -0.03 -0.07 0 -0.04 C0.03 -0.01 0.07 0 0.11 -0.07' },
+  '\u0304': { d: 'M-0.11 -0.03 L0.11 -0.03', wide: true },
+  '\u0305': { d: 'M-0.11 -0.03 L0.11 -0.03', wide: true },
+  '\u0306': { d: 'M-0.09 -0.08 C-0.06 0.01 0.06 0.01 0.09 -0.08' },
+  '\u0307': { d: 'M0 -0.03 L0.006 -0.025' },
+  '\u0308': { d: 'M-0.07 -0.03 L-0.064 -0.025 M0.07 -0.03 L0.076 -0.025' },
+  '\u030a': { d: 'M0 -0.1 C-0.05 -0.1 -0.05 0 0 0 C0.05 0 0.05 -0.1 0 -0.1' },
+  '\u030c': { d: 'M-0.1 -0.1 L0 0 L0.1 -0.1' },
+  '\u20d7': { d: 'M-0.12 -0.04 L0.12 -0.04 M0.06 -0.08 L0.12 -0.04 L0.06 0', wide: true },
+};
+
+/** Can the pen add every mark in this list? */
+export function hasMarks(marks: string): boolean {
+  return marks !== '' && [...marks].every((m) => m in MARKS);
+}
+
+/**
+ * A letter with its accents: the letter as the hand writes it, and each mark
+ * drawn above it with the pen, stacked if there are several.
+ */
+export function withMarks(base: StrokeGlyph, marks: string, xHeight: number): StrokeGlyph {
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let top = 0;
+  for (const stroke of base.strokes) {
+    for (let i = 0; i < stroke.length; i += 3) {
+      x0 = Math.min(x0, stroke[i]);
+      x1 = Math.max(x1, stroke[i]);
+      top = Math.min(top, stroke[i + 1]);
+    }
+  }
+  if (!Number.isFinite(x0)) {
+    x0 = 0;
+    x1 = base.advance;
+  }
+  const k = Math.max(0.3, Math.min(1.4, xHeight / DESIGN_X));
+  // Never lower than a small letter's top, so a hat on an "a" and on an "x" line up.
+  let foot = Math.min(top, -xHeight) - 0.07 * k;
+  const strokes = [...base.strokes];
+  for (const mark of marks) {
+    const def = MARKS[mark];
+    if (!def) continue;
+    const mid = (x0 + x1) / 2;
+    const stretch = def.wide ? Math.max(1, (x1 - x0) / (0.22 * k)) : 1;
+    for (const stroke of parseStrokes(def.d)) {
+      for (let i = 0; i < stroke.length; i += 3) {
+        stroke[i] = mid + stroke[i] * k * stretch;
+        stroke[i + 1] = foot + stroke[i + 1] * k;
+      }
+      strokes.push(stroke);
+    }
+    foot -= 0.14 * k;
+  }
+  return { strokes, advance: base.advance };
+}
+
 /** Every character with a pen-drawn glyph, for tests and the symbol sheet. */
 export function symbolCharacters(): string[] {
   return Object.keys(DEFS);

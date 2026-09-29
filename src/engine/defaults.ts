@@ -43,12 +43,18 @@ export const DEFAULT_SETTINGS: Settings = {
   margins: { top: 20, right: 12, bottom: 14, left: 28 },
   features: { ...DEFAULT_FEATURES },
   texture: true,
-  finish: 'none',
+  // Most handwritten work is handed in as a phone scan, so that is how a page
+  // first looks.
+  finish: 'phone',
 
   diagrams: true,
   diagramStyle: 'sketch',
   diagramFrame: false,
   diagramScale: 0.72,
+
+  writerName: '',
+  writerId: '',
+  writerEveryPage: false,
 
   messiness: 0.5,
   corrections: 0.12,
@@ -70,7 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 const PAPER_STYLES: PaperStyle[] = ['plain', 'ruled', 'grid', 'dotted', 'four-line', 'seyes'];
 const PENS: PenType[] = ['ballpoint', 'gel', 'rollerball', 'fountain', 'calligraphy', 'felt', 'pencil'];
-const FINISHES: FinishLook[] = ['none', 'scan', 'photo'];
+const FINISHES: FinishLook[] = ['none', 'scan', 'phone', 'photo'];
 const DIAGRAM_STYLES: DiagramStyle[] = ['sketch', 'pasted'];
 const MARGIN_RULES: MarginRule[] = ['none', 'single', 'double', 'box'];
 const HOLES: Holes[] = ['none', 'punch2', 'punch3', 'spiral'];

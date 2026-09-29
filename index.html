@@ -34,7 +34,7 @@
           <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
             <path d="M10 14V3m0 0L6 7m4-4 4 4M3 13v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
           </svg>
-          Import PDF, Word or text
+          Upload PDF or Word
           <input type="file" id="import-file" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
         </label>
         <button type="button" class="button primary small" id="quick-pdf" title="Download every page as a PDF">
@@ -43,14 +43,113 @@
           </svg>
           Download PDF
         </button>
-        <button type="button" class="ghost small" id="toggle-advanced" aria-pressed="false">All settings</button>
-        <button type="button" class="ghost small" id="copy-style" title="Copy a link that carries these settings">Copy style link</button>
-        <button type="button" class="ghost small" id="reset-all" title="Back to the default settings">Reset</button>
+        <button type="button" class="ghost small" id="toggle-advanced" aria-pressed="false">More options</button>
       </div>
     </header>
 
     <main class="app">
       <aside class="panel" aria-label="Settings">
+        <!-- The simple view: three steps, and the choices most people make. -->
+        <div class="easy" id="easy">
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">1</span>
+              <h2>Your text</h2>
+              <span class="muted" id="easy-count"></span>
+            </div>
+            <textarea id="easy-text" data-key="text" spellcheck="true" rows="8" aria-label="Text to handwrite" placeholder="Type or paste your text here, or upload a PDF or Word file."></textarea>
+            <div class="row wrap">
+              <label class="button small">
+                Upload PDF or Word
+                <input type="file" id="easy-import" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
+              </label>
+              <button type="button" class="ghost small" id="easy-draw">Draw a diagram</button>
+              <button type="button" class="ghost small" id="easy-clear">Clear</button>
+            </div>
+            <div class="writer">
+              <label class="field"><span>Your name</span><input type="text" data-key="writerName" autocomplete="name" spellcheck="false" placeholder="Written at the top" /></label>
+              <label class="field"><span>ID / roll no.</span><input type="text" data-key="writerId" autocomplete="off" spellcheck="false" /></label>
+              <label class="check"><input type="checkbox" data-key="writerEveryPage" /> <span>Head every page, not just the first</span></label>
+            </div>
+            <p class="hint" id="easy-note">Diagrams, charts and equations in a PDF are drawn again by hand.</p>
+          </section>
+
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">2</span>
+              <h2>Pick a look</h2>
+            </div>
+            <div class="looks" id="easy-looks"></div>
+
+            <div class="easy-row">
+              <span class="easy-label">Handwriting</span>
+              <div class="chips hands" id="easy-hands"></div>
+            </div>
+            <button type="button" class="own-cta" id="easy-own">
+              <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+                <path d="M3 17c2-1 3-4 5-4s1 3 3 3 2-5 4-5 1 3 2 3M13 3l4 4-7 7H6v-4z" />
+              </svg>
+              <span><b>Use my own handwriting</b><small>Write the alphabet once. Nobody can match it to a font.</small></span>
+            </button>
+
+            <div class="easy-row">
+              <span class="easy-label">Paper</span>
+              <div class="chips papers" id="easy-papers"></div>
+            </div>
+
+            <div class="easy-row">
+              <span class="easy-label">Pen</span>
+              <div class="segmented" data-segmented="pen">
+                <button type="button" data-value="ballpoint">Ballpoint</button>
+                <button type="button" data-value="gel">Gel</button>
+                <button type="button" data-value="fountain">Fountain</button>
+                <button type="button" data-value="pencil">Pencil</button>
+              </div>
+            </div>
+            <div class="easy-row">
+              <span class="easy-label">Ink</span>
+              <div class="swatches" data-swatches="inkColor">
+                <button type="button" class="swatch" data-value="#1d3b8f" title="Blue"></button>
+                <button type="button" class="swatch" data-value="#2a1f63" title="Blue-black"></button>
+                <button type="button" class="swatch" data-value="#1f2024" title="Black"></button>
+                <button type="button" class="swatch" data-value="#b3261e" title="Red"></button>
+                <button type="button" class="swatch" data-value="#1f6b3a" title="Green"></button>
+              </div>
+            </div>
+            <div class="easy-row">
+              <span class="easy-label">Handed in as</span>
+              <div class="segmented" data-segmented="finish">
+                <button type="button" data-value="none">The page</button>
+                <button type="button" data-value="phone">App scan</button>
+                <button type="button" data-value="scan">Scanner</button>
+                <button type="button" data-value="photo">Photo</button>
+              </div>
+            </div>
+            <label class="field range">
+              <span>Neat or messy <output data-for="messiness" data-format="neat"></output></span>
+              <input type="range" data-key="messiness" min="0" max="1" step="0.01" />
+            </label>
+            <label class="field range">
+              <span>Letter size <output data-for="letterSize" data-format="pct"></output></span>
+              <input type="range" data-key="letterSize" min="0.18" max="0.6" step="0.01" />
+            </label>
+          </section>
+
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">3</span>
+              <h2>Download</h2>
+              <span class="muted" id="easy-pages"></span>
+            </div>
+            <div class="row">
+              <button type="button" class="primary big" id="easy-pdf">Download PDF</button>
+              <button type="button" class="big" id="easy-png">Images</button>
+            </div>
+            <progress id="easy-progress" max="1" value="0" hidden></progress>
+            <p class="hint" id="easy-status" role="status" aria-live="polite">Free, no sign-up, no watermark. Nothing leaves this browser.</p>
+          </section>
+        </div>
+
         <div class="tabs" role="tablist" aria-label="Setting groups">
           <button type="button" role="tab" id="tab-text" aria-controls="panel-text" aria-selected="true">Text</button>
           <button type="button" role="tab" id="tab-paper" aria-controls="panel-paper" aria-selected="false">Paper</button>
@@ -89,6 +188,11 @@
               <span>Read structure: <code>#</code> headings, <code>-</code> lists, <code>**bold**</code></span>
             </label>
             <p class="hint">Put <code>[[page]]</code> on a line of its own to start a new sheet.</p>
+            <div class="writer">
+              <label class="field"><span>Your name</span><input type="text" data-key="writerName" autocomplete="name" spellcheck="false" placeholder="Written at the top" /></label>
+              <label class="field"><span>ID / roll no.</span><input type="text" data-key="writerId" autocomplete="off" spellcheck="false" /></label>
+              <label class="check"><input type="checkbox" data-key="writerEveryPage" /> <span>Head every page, not just the first</span></label>
+            </div>
           </section>
 
           <section class="card" data-advanced>
@@ -236,10 +340,14 @@
             <h2>How it was captured</h2>
             <div class="segmented" data-segmented="finish">
               <button type="button" data-value="none">Flat</button>
+              <button type="button" data-value="phone">App scan</button>
               <button type="button" data-value="scan">Scanner</button>
-              <button type="button" data-value="photo">Phone photo</button>
+              <button type="button" data-value="photo">Photo</button>
             </div>
-            <p class="hint">A scan sits crooked under an uneven lamp. A photo keystones on a desk, with the light falling across it.</p>
+            <p class="hint">
+              An app scan is what a phone scanning app hands in: white paper, strong ink, a slightly bowed sheet. A scanner leaves
+              a grey cast and a crooked page; a photo keystones on a desk in warm light.
+            </p>
           </section>
         </section>
 
@@ -462,6 +570,15 @@
             <progress id="export-progress" max="1" value="0" hidden></progress>
             <p class="hint" id="export-status" role="status" aria-live="polite"></p>
             <p class="hint" id="export-estimate"></p>
+          </section>
+
+          <section class="card">
+            <h2>Share and start over</h2>
+            <div class="row wrap">
+              <button type="button" class="ghost small" id="copy-style" title="Copy a link that carries these settings">Copy style link</button>
+              <button type="button" class="ghost small" id="reset-all" title="Back to the default settings">Reset every setting</button>
+            </div>
+            <p class="hint">A style link carries the look — hand, paper, pen — never your text.</p>
           </section>
 
           <section class="card" data-advanced>

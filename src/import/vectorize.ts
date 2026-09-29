@@ -57,6 +57,19 @@ export interface VectorizeOptions {
   minSpeck?: number;
   /** Give up on images that turn into more paths than this: they are not line art. */
   maxPaths?: number;
+  /** Look for solid areas to shade. Off for a letter, which is all strokes however bold. */
+  solids?: boolean;
+  /** Whiskers shorter than this (pixels) are trimmed. Found from the line width when not given. */
+  spur?: number;
+  /** Or: trim whiskers shorter than this many stroke widths. */
+  spurWidths?: number;
+  /**
+   * Thinning stops a stroke half a pen-width short of each end. Put that back,
+   * so a traced letter reaches as far as the printed one did.
+   */
+  extendEnds?: boolean;
+  /** How far a simplified path may stray from the traced one, in pixels. */
+  epsilon?: number;
 }
 
 /**
@@ -106,7 +119,7 @@ export function vectorize(
   const core = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (dist[i] >= solidHalf) core[i] = 1;
   const solid = new Uint8Array(n);
-  if (core.some((v) => v === 1)) {
+  if (options.solids !== false && core.some((v) => v === 1)) {
     const outside = new Uint8Array(n);
     for (let i = 0; i < n; i++) outside[i] = core[i] === 1 ? 0 : 1;
     const toCore = distanceTransform(outside, width, height);
@@ -150,13 +163,19 @@ export function vectorize(
   if (fills.length > 0) thin(centre, width, height);
   cleanStaircases(centre, width, height);
 
-  const raw = tracePaths(centre, width, height, Math.max(3, lineWidth * 1.6 + 1));
+  const spur =
+    options.spur ?? (options.spurWidths !== undefined ? Math.max(2, typicalHalf * 2 * options.spurWidths) : Math.max(3, lineWidth * 1.6 + 1));
+  const raw = tracePaths(centre, width, height, spur);
   const maxPaths = options.maxPaths ?? 2500;
   if (raw.length > maxPaths) return null;
 
   const paths: VectorPath[] = [];
   for (const path of raw) {
-    const pts = simplify(path.pts, 0.75, path.closed);
+    if (options.extendEnds && !path.closed && path.pts.length >= 4) {
+      extendEnd(path.pts, true, dist, width, height);
+      extendEnd(path.pts, false, dist, width, height);
+    }
+    const pts = simplify(path.pts, options.epsilon ?? 0.75, path.closed);
     if (pts.length < 4 && !path.closed) {
       // A lone dot is worth keeping: it is a point on a graph.
       if (path.pts.length >= 2) paths.push({ pts: [path.pts[0], path.pts[1]], weight: 1, closed: false });
@@ -172,6 +191,29 @@ export function vectorize(
     paths.push({ pts, weight, closed: path.closed });
   }
   return { paths, fills, lineWidth };
+}
+
+/**
+ * Lengthen one end of a traced path by the half-width of the ink there, along
+ * the path's own direction: thinning eats that much from every free end.
+ */
+function extendEnd(pts: number[], start: boolean, dist: Float32Array, width: number, height: number): void {
+  const count = pts.length / 2;
+  const i0 = start ? 0 : count - 1;
+  const i1 = start ? Math.min(count - 1, 4) : Math.max(0, count - 5);
+  const x = pts[i0 * 2];
+  const y = pts[i0 * 2 + 1];
+  let dx = x - pts[i1 * 2];
+  let dy = y - pts[i1 * 2 + 1];
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  dx /= len;
+  dy /= len;
+  const xi = Math.max(0, Math.min(width - 1, x | 0));
+  const yi = Math.max(0, Math.min(height - 1, y | 0));
+  const by = Math.max(0, dist[yi * width + xi] - 0.5);
+  pts[i0 * 2] = x + dx * by;
+  pts[i0 * 2 + 1] = y + dy * by;
 }
 
 /**

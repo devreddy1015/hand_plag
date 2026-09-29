@@ -363,35 +363,59 @@ export function drawPaper(
   ctx.restore();
 }
 
-/** The printed "Name / Class / Date" line found on exam and exercise sheets. */
-function drawNameDate(ctx: Ctx2D, geom: PageGeometry, s: Settings): void {
+/** One field of the printed "Name / Class / Date" line. */
+export interface NameDateField {
+  label: 'Name' | 'Class' | 'Date';
+  /** Where the printed label starts, and where its blank starts and ends. */
+  x: number;
+  blank: number;
+  end: number;
+  /** Baseline of the label; the blank is ruled just under it. */
+  y: number;
+  /** Size of the printed type. */
+  size: number;
+}
+
+/**
+ * Where the printed "Name / Class / Date" line puts each field, so that the
+ * sheet can print it and the writer can fill it in on the same blanks.
+ */
+export function nameDateFields(geom: PageGeometry): NameDateField[] {
   const area = geom.areas[0];
   const last = geom.areas[geom.areas.length - 1];
   const y = (geom.headerRuleY ?? geom.rules[0] ?? geom.spacing) - geom.spacing * 0.35;
   const size = Math.min(3.2 * MM, geom.spacing * 0.42);
-  ctx.globalAlpha = 0.6;
-  ctx.fillStyle = s.ruleColor;
-  ctx.strokeStyle = s.ruleColor;
-  ctx.font = `${size.toFixed(2)}px Georgia, 'Times New Roman', serif`;
-  ctx.textBaseline = 'alphabetic';
-  const fields: [string, number][] = [
-    ['Name', 0.46],
-    ['Class', 0.2],
-    ['Date', 0.24],
+  // Share of the line, and the width of the label and a space in Georgia, in em.
+  const shares: [NameDateField['label'], number, number][] = [
+    ['Name', 0.46, 2.8],
+    ['Class', 0.2, 2.5],
+    ['Date', 0.24, 2.35],
   ];
   const width = last.right - area.left;
   let x = area.left;
+  return shares.map(([label, share, em]) => {
+    const span = width * share;
+    const field = { label, x, blank: x + size * em, end: x + span - 3 * MM, y, size };
+    x += span;
+    return field;
+  });
+}
+
+/** The printed "Name / Class / Date" line found on exam and exercise sheets. */
+function drawNameDate(ctx: Ctx2D, geom: PageGeometry, s: Settings): void {
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = s.ruleColor;
+  ctx.strokeStyle = s.ruleColor;
+  ctx.textBaseline = 'alphabetic';
   ctx.lineWidth = 0.15 * MM;
   ctx.setLineDash([0.9 * MM, 0.9 * MM]);
-  for (const [label, share] of fields) {
-    const span = width * share;
-    ctx.fillText(label, x, y);
-    const labelWidth = ctx.measureText(`${label} `).width;
+  for (const field of nameDateFields(geom)) {
+    ctx.font = `${field.size.toFixed(2)}px Georgia, 'Times New Roman', serif`;
+    ctx.fillText(field.label, field.x, field.y);
     ctx.beginPath();
-    ctx.moveTo(x + labelWidth, y + 0.4 * MM);
-    ctx.lineTo(x + span - 3 * MM, y + 0.4 * MM);
+    ctx.moveTo(field.blank, field.y + 0.4 * MM);
+    ctx.lineTo(field.end, field.y + 0.4 * MM);
     ctx.stroke();
-    x += span;
   }
   ctx.setLineDash([]);
 }

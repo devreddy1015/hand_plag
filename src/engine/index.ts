@@ -10,7 +10,7 @@ export { layoutDocument, PAGE_BREAK, PEN_INK_VARIATION, type ImageInfo, type Lay
 export { sketchStrokes, type SketchPlacement, type SketchStyle } from './sketch';
 export { EM_BOLD, EM_ITALIC, EM_SUB, EM_SUP, EM_UNDERLINE, parseBlocks, type Block, type BlockKind } from './markup';
 export { releaseLayers, releaseSketches, renderPage, type RenderOptions } from './render';
-export { MM, PAPER_SIZES, drawPaper, findPaperSize, get2d, pageGeometry, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
+export { MM, PAPER_SIZES, drawPaper, findPaperSize, get2d, nameDateFields, pageGeometry, type AnyCanvas, type CanvasFactory, type Ctx2D, type NameDateField } from './paper';
 export {
   DEFAULT_FEATURES,
   PAPER_TEMPLATES,
@@ -21,7 +21,7 @@ export {
 } from './templates';
 export { detectScripts, graphemes, scriptOf, tokenize, writtenForm, type ScriptTag } from './segment';
 export { PENS, penFor, type PenStyle } from './pen';
-export { LATIN_TWINS, hasSymbol, parseStrokes, symbolCharacters, symbolGlyph } from './symbols';
+export { LATIN_TWINS, hasMarks, hasSymbol, parseStrokes, symbolCharacters, symbolGlyph, withMarks } from './symbols';
 export {
   OP_CLOSE,
   OP_CUBIC,

@@ -175,6 +175,7 @@ export function buildHand(hand: OwnHand): BuiltHand {
         const shift = (advance - (r.maxX - r.minX)) / 2 - r.minX;
         return {
           advance,
+          own: true,
           strokes: sample.strokes.filter((s) => s.length >= 3).map((stroke) => {
             const out = Float32Array.from(stroke);
             for (let i = 0; i < out.length; i += 3) out[i] += shift;

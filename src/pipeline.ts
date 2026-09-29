@@ -3,13 +3,14 @@ import {
   fontSizeFor,
   get2d,
   graphemes,
+  hasMarks,
   hasSymbol,
   layoutDocument,
   LATIN_TWINS,
   pageGeometry,
-  penWeightOf,
   renderPage,
   symbolGlyph,
+  withMarks,
   writtenForm,
   type AnyCanvas,
   type CanvasFactory,
@@ -22,6 +23,7 @@ import {
 import { createMeasurer, cssFontStack, fallbackScaler, findFont, fontFamiliesFor, fontMetrics, loadFonts, type FontEntry } from './fonts';
 import { pictureImage, pictureMetrics } from './images';
 import { loadOutlines, type OutlineFont } from './outlines';
+import { penGlyph } from './strokefont';
 
 export interface Prepared {
   settings: Settings;
@@ -72,13 +74,27 @@ function shapesFor(font: FontEntry, outlines: OutlineFont | null, xHeight: numbe
     return yes;
   };
   const hand = font.hand;
+  const letter = (unit: string, variant: number) =>
+    hand?.glyph(unit, variant) ??
+    (outlines?.has(unit) ? penGlyph(font.family, unit) : null) ??
+    (drawn(unit) ? symbolGlyph(unit, xHeight, capHeight) : null);
   return {
     xHeight,
     capHeight,
     connected: font.connected === true,
     outline: (unit) => outlines?.outline(unit) ?? null,
-    strokeGlyph: (unit, variant) => hand?.glyph(unit, variant) ?? (drawn(unit) ? symbolGlyph(unit, xHeight, capHeight) : null),
-    strokeWeight: hand ? hand.weight : penWeightOf(outlines?.outline('-') ?? null),
+    strokeGlyph: (unit, variant) => {
+      // A letter with an accent no font has — the hat of a unit vector — is
+      // the letter, with the accent added by the pen.
+      const accented = /^(\P{M})(\p{M}+)$/u.exec(unit);
+      if (accented && hasMarks(accented[2]) && unit.normalize('NFC').length > 1) {
+        const base = letter(accented[1], variant);
+        if (base) return withMarks(base, accented[2], xHeight);
+      }
+      return letter(unit, variant);
+    },
+    // A ballpoint line is about a sixth of the height of a small letter.
+    strokeWeight: hand ? hand.weight : xHeight * 0.175,
   };
 }
 
@@ -193,4 +209,32 @@ export function drawPaperOnly(target: AnyCanvas, settings: Settings, widthPx: nu
   ctx.clearRect(0, 0, w, h);
   // Grain is invisible at thumbnail size and costs a tile render per template.
   drawPaper(ctx, geom, { ...settings, texture: false }, scale, 0, createCanvas);
+}
+
+/**
+ * A corner of a real page in a given look, for the look cards: the same
+ * engine that writes the document, on a small sheet, so the card shows
+ * exactly what pressing it will give.
+ */
+export async function drawLookSample(target: HTMLCanvasElement, settings: Settings, text: string, cssWidth: number, cssHeight: number): Promise<void> {
+  const sample: Settings = structuredClone(settings);
+  sample.text = text;
+  sample.writerName = '';
+  sample.writerId = '';
+  sample.paperSize = 'a6';
+  sample.landscape = false;
+  sample.features = { ...sample.features, holes: 'none', pageNumber: 'none', nameDateLine: false, columns: 1, cueColumn: 0, summaryBox: 0 };
+  sample.margins = { ...sample.margins, top: Math.min(sample.margins.top, 12), left: Math.min(sample.margins.left, 14), right: 6 };
+  sample.lineSpacing = Math.min(sample.lineSpacing, 7);
+  const prepared = await prepare(sample);
+  const geometry = prepared.doc.geometryOf(0);
+  const dpr = window.devicePixelRatio || 1;
+  const page = createCanvas(1, 1) as HTMLCanvasElement;
+  drawPage(page, prepared, 0, (cssWidth * dpr) / geometry.width);
+  target.width = Math.round(cssWidth * dpr);
+  target.height = Math.round(cssHeight * dpr);
+  const ctx = get2d(target);
+  ctx.drawImage(page, 0, 0, page.width, target.height, 0, 0, target.width, target.height);
+  page.width = 1;
+  page.height = 1;
 }
