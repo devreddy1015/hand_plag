@@ -51,16 +51,19 @@ export const importPdf: Importer<Partial<PdfOptions>> = async (file, onProgress,
       const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale: 1 });
       const content = await page.getTextContent();
-      const all = await withFontKinds(page, content.items as TextItem[]);
+      const all = (await withFontKinds(page, content.items as TextItem[])).map(inlineOperator);
       // Arrowheads and big brackets set in drawing fonts are part of a
       // picture, not words to write.
       const runs = all.filter((run) => !run.drawing);
       const lines = buildLines(runs, viewport.height, viewport.width);
       markBrokenMaths(lines, all, viewport.height);
+      // The bar of a root is drawn, not written: read back as words, √z² + x²
+      // no longer says how much of the sum is under it.
+      for (const line of lines) if (line.text.includes('\u221a')) line.broken = true;
       const entry: PageLines = { index: i - 1, width: viewport.width, height: viewport.height, lines };
       if (opts.diagrams) {
         try {
-          entry.figures = await extractFigures(page, entry, runs, images);
+          entry.figures = await extractFigures(page, entry, runs, all.filter((run) => run.drawing || run.operator), images);
         } catch (err) {
           // A figure that cannot be cut out is no reason to lose the text.
           console.warn('Could not read the diagrams on page', i, err);
@@ -98,6 +101,43 @@ interface KindedRun extends TextRun {
 }
 
 /**
+ * TeX's extension font carries no character map, so its glyphs come out as
+ * the codes of their places in the font: an integral set in a sentence reads
+ * as "R". The operators set at the size of the text are named here, so that a
+ * sentence holding one is written out, ∫ and all, rather than copied as a
+ * picture of itself.
+ */
+const INLINE_OPERATORS: Record<string, string> = {
+  H: '\u222e',
+  P: '\u2211',
+  Q: '\u220f',
+  R: '\u222b',
+  // The smallest of the big brackets, \big( and \big[.
+  '\u0000': '(',
+  '\u0001': ')',
+  '\u0002': '[',
+  '\u0003': ']',
+};
+
+function inlineOperator(run: KindedRun): KindedRun {
+  // The root sign hangs from where it is placed as well; read at face value
+  // it floats a line above the sum it stands over.
+  if (run.math && !run.operator && run.transform && run.str.trim() === '\u221a') {
+    const t = [...run.transform];
+    t[5] -= (Math.hypot(t[2], t[3]) || 10) * 0.8;
+    return { ...run, transform: t };
+  }
+  const chars = [...run.str.trim()];
+  if (!run.operator || !run.transform || chars.length === 0 || !chars.every((c) => c in INLINE_OPERATORS)) return run;
+  const name = chars.map((c) => INLINE_OPERATORS[c]).join('');
+  const t = [...run.transform];
+  // It hangs from where it is placed, centred on the maths axis: its
+  // baseline is most of its height further down.
+  t[5] -= (Math.hypot(t[2], t[3]) || 10) * 0.8;
+  return { ...run, str: name, transform: t, drawing: false, operator: false, math: true };
+}
+
+/**
  * An integral sign or a big bracket in the middle of a sentence was drawn, not
  * written, so it is missing from the words read back: "along path (1): v · dl
  * = 11" has lost its ∫. Such a line has to be copied out as it stands.
@@ -105,11 +145,20 @@ interface KindedRun extends TextRun {
 function markBrokenMaths(lines: Line[], runs: KindedRun[], pageHeight: number): void {
   for (const run of runs) {
     if (!run.operator || !run.transform || run.str.trim() === '') continue;
-    const x = run.transform[4];
-    const y = pageHeight - run.transform[5];
+    const t = run.transform;
+    const x = t[4];
+    // TeX's big symbols hang from their baseline: the middle of the glyph is
+    // half its size below where it is placed.
+    const middle = pageHeight - t[5] + Math.hypot(t[2], t[3]) * 0.5;
+    const end = x + (run.width || 0);
     for (const line of lines) {
-      if (x < line.x0 - line.size || x > line.x1 + line.size) continue;
-      if (Math.abs(line.y - y) < line.size * 1.5) line.broken = true;
+      // Inside the sentence, not after it: a displayed formula's integral
+      // sits where the sentence around it has already stopped. Or just in
+      // front of it: a formula that opens with its integral sign, its limit
+      // perhaps set between the two.
+      const opens = end <= line.x0 + 1 && end >= line.x0 - line.size * 3;
+      if (!opens && (x <= line.x0 || x >= line.x1)) continue;
+      if (Math.abs(middle - (line.y - line.size * 0.3)) < line.size * 0.8) line.broken = true;
     }
   }
 }
@@ -153,7 +202,13 @@ async function withFontKinds(page: PDFPageProxy, items: TextItem[]): Promise<Kin
  * words a person would copy. Displayed equations are cut out the same way:
  * they are drawings of mathematics, not sentences.
  */
-async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRun[], images: ImportedImage[]): Promise<PageFigure[]> {
+async function extractFigures(
+  page: PDFPageProxy,
+  entry: PageLines,
+  runs: TextRun[],
+  drawn: TextRun[],
+  images: ImportedImage[],
+): Promise<PageFigure[]> {
   const bodySizeFirst = bodySizeOf(entry.lines);
   const maths = findMathBlocks(entry.lines, {
     bodyLeft: leftOf(entry.lines),
@@ -161,6 +216,7 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
     leading: leadingOf(entry.lines, bodySizeFirst),
     bodySize: bodySizeFirst,
   });
+  reachDelimiters(maths.boxes, drawn, entry.height, bodySizeFirst);
   if (maths.boxes.length === 0 && !(await drawsAnything(page))) return [];
 
   const viewport = page.getViewport({ scale: PX_PER_PT });
@@ -227,25 +283,50 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
     width: b.width / PX_PER_PT,
     height: b.height / PX_PER_PT,
   }));
+  // Equations are already spoken for: a figure that took them as labels
+  // would grow over every formula set beside it.
   const { figures, consumed } = absorbText(
     inPoints,
-    entry.lines.filter((line) => !tables.consumed.has(line)),
+    entry.lines.filter((line) => !tables.consumed.has(line) && !maths.consumed.has(line)),
     bodySize,
     measureOf(entry.lines),
   );
   for (const box of tableBoxes) figures.push({ box, caption: '' });
   for (const line of tables.consumed) consumed.add(line);
 
-  // An equation drawn inside a figure is part of that figure, not a second one.
+  // An equation drawn inside a figure is part of that figure, not a second
+  // one; the figure takes in whatever of it pokes out.
   const equations = maths.boxes
-    .filter((box) => !figures.some((figure) => overlaps(figure.box, box)))
+    .map((box, i) => ({ box, own: new Set(maths.blocks[i]), prose: maths.prose[i] }))
+    .filter(({ box }) => {
+      const host = figures.find((figure) => shared(figure.box, box) >= area(box) * 0.5);
+      if (host) host.box = unite(host.box, box);
+      return !host;
+    })
     // A rule, a root or a big bracket reaches past the glyphs the box was
     // measured from, so grow it until it stops touching ink — but never far
-    // enough to clip the top off the sentence underneath.
-    .map((box) => growToInk(box, inkReader(ctx, width, height), roomAround(box, entry.lines, maths.consumed)));
+    // enough to clip the top off the line underneath, even when that line is
+    // another equation.
+    .map(({ box, own, prose }) => ({ box: growToInk(box, inkReader(ctx, width, height), roomAround(box, entry.lines, own)), prose }));
+  // Two pieces of one formula found apart — its main line, and the rows of
+  // fractions over and under it — come out as boxes lying mostly over each
+  // other. They are one formula, copied once.
+  for (let joined = true; joined; ) {
+    joined = false;
+    for (let i = 0; i < equations.length && !joined; i++) {
+      for (let j = i + 1; j < equations.length && !joined; j++) {
+        const a = equations[i].box;
+        const b = equations[j].box;
+        if (shared(a, b) < Math.min(area(a), area(b)) * 0.3) continue;
+        equations[i] = { box: unite(a, b), prose: equations[i].prose && equations[j].prose };
+        equations.splice(j, 1);
+        joined = true;
+      }
+    }
+  }
   const all = [
-    ...figures.map((figure) => ({ box: figure.box, caption: figure.caption, kind: 'figure' as const })),
-    ...equations.map((box) => ({ box, caption: '', kind: 'math' as const })),
+    ...figures.map((figure) => ({ box: figure.box, caption: figure.caption, kind: 'figure' as const, prose: false })),
+    ...equations.map(({ box, prose }) => ({ box, caption: '', kind: 'math' as const, prose })),
   ].sort((a, b) => a.box.y - b.box.y);
 
   for (const line of maths.consumed) consumed.add(line);
@@ -253,6 +334,8 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
   setOnFrameMargins(entry.lines, frames);
 
   const out: PageFigure[] = [];
+  // Every word is copied once, into the first cut-out that holds it.
+  const taken = new Set<RunBox>();
   all.forEach((figure, n) => {
     const id = `pdf-${entry.index + 1}-${n + 1}`;
     const pad = figure.kind === 'math' ? 2 : 6;
@@ -263,16 +346,57 @@ async function extractFigures(page: PDFPageProxy, entry: PageLines, runs: TextRu
     picture.kind = figure.kind;
     picture.pointWidth = figure.box.width;
     picture.sourceSize = bodySize;
-    const labels = placed.filter((run) => writable(run.text) && insideCrop(run, crop));
-    const sketch = traceCrop(ctx, crop, labels);
+    const words = placed.filter((run) => writable(run.text) && insideCrop(run, crop));
+    const labels = words.filter((run) => !taken.has(run));
+    for (const run of labels) taken.add(run);
+    // Words written with another cut-out are still words, not lines to trace.
+    const sketch = traceCrop(ctx, crop, labels, figure.kind === 'math', words);
+    if (sketch && figure.prose) sketch.prose = true;
     if (sketch) picture.sketch = sketch;
     else if (figure.kind === 'figure') picture.kind = 'photo';
     images.push(picture);
-    out.push({ id, top: figure.box.y, bottom: figure.box.y + figure.box.height, caption: figure.caption });
+    // An equation is read where its middle is: its box reaches up past the
+    // line before it wherever a root or a limit stands tall.
+    const top = figure.kind === 'math' ? figure.box.y + figure.box.height / 2 : figure.box.y;
+    out.push({ id, top, bottom: figure.box.y + figure.box.height, caption: figure.caption });
   });
 
   release(canvas);
   return out;
+}
+
+/**
+ * Big brackets and integral signs are set in a font that draws, so no line of
+ * text reaches them: an equation box measured from its lines stops short of
+ * its own closing bracket, and the bracket left outside is taken for a piece
+ * of drawing. Widen each box over the big symbols on its rows. In points.
+ */
+function reachDelimiters(boxes: Box[], drawn: TextRun[], pageHeight: number, bodySize: number): void {
+  const symbols = drawn
+    .filter((run) => run.transform && run.str.trim() !== '')
+    .map((run) => {
+      const t = run.transform;
+      const size = Math.hypot(t[2], t[3]) || bodySize;
+      // They hang from where they are placed.
+      const top = pageHeight - t[5];
+      return { x: t[4], y: top, width: Math.max(1, run.width), height: size };
+    });
+  for (const box of boxes) {
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const s of symbols) {
+        const middle = s.y + s.height / 2;
+        if (middle < box.y || middle > box.y + box.height) continue;
+        if (s.x + s.width < box.x - bodySize * 1.5 || s.x > box.x + box.width + bodySize * 1.5) continue;
+        const x0 = Math.min(box.x, s.x);
+        const x1 = Math.max(box.x + box.width, s.x + s.width);
+        if (x0 > box.x - 0.01 && x1 < box.x + box.width + 0.01) continue;
+        box.x = x0;
+        box.width = x1 - x0;
+        grew = true;
+      }
+    }
+  }
 }
 
 /** A run of text as a box on the rendered page, in pixels. */
@@ -330,12 +454,12 @@ function insideCrop(run: RunBox, crop: Crop): boolean {
  * Trace a cut-out figure into pen paths, leaving out the words: those are
  * written in the hand instead, where they stood.
  */
-function traceCrop(ctx: CanvasRenderingContext2D, crop: Crop, labels: RunBox[]): Sketch | null {
+function traceCrop(ctx: CanvasRenderingContext2D, crop: Crop, labels: RunBox[], maths = false, words: RunBox[] = labels): Sketch | null {
   const data = ctx.getImageData(crop.x, crop.y, crop.w, crop.h).data;
   const lum = luminance(data);
   if (!looksLikeLineArt(lum)) return null;
   const ignore = new Uint8Array(crop.w * crop.h);
-  for (const run of labels) {
+  for (const run of words) {
     const pad = Math.max(1, run.size * 0.06);
     const x0 = Math.max(0, Math.floor(run.x - crop.x - pad));
     const x1 = Math.min(crop.w - 1, Math.ceil(run.x + run.width - crop.x + pad));
@@ -343,8 +467,39 @@ function traceCrop(ctx: CanvasRenderingContext2D, crop: Crop, labels: RunBox[]):
     const y1 = Math.min(crop.h - 1, Math.ceil(run.y + run.size * 0.26 - crop.y + pad));
     for (let y = y0; y <= y1; y++) ignore.fill(1, y * crop.w + x0, y * crop.w + x1 + 1);
   }
+  // A rule running on past the words — the bar of a root over its sum, the
+  // line of a fraction — is drawn, not written, even where it passes over
+  // them. No letter has a stroke across it half so long.
+  if (words.length > 0) {
+    const sizes = words.map((run) => run.size).sort((a, b) => a - b);
+    const long = Math.max(6, sizes[Math.floor(sizes.length / 2)] * 1.3);
+    for (let y = 0; y < crop.h; y++) {
+      const row = y * crop.w;
+      let start = -1;
+      for (let x = 0; x <= crop.w; x++) {
+        const dark = x < crop.w && lum[row + x] < INK_LEVEL;
+        if (dark && start < 0) start = x;
+        if (!dark && start >= 0) {
+          if (x - start >= long) ignore.fill(0, row + start, row + x);
+          start = -1;
+        }
+      }
+    }
+  }
   const traced = vectorize(lum, crop.w, crop.h, ignore, {}, data);
   if (!traced) return null;
+  // Specks left round the words of an equation — the tail of an italic
+  // letter reaching past its box — are not lines anyone drew. (A figure's
+  // short strokes are its dashes and ticks, and stay.)
+  if (maths && labels.length > 0) {
+    const sizes = labels.map((run) => run.size).sort((a, b) => a - b);
+    const speck = sizes[Math.floor(sizes.length / 2)] * 0.18;
+    traced.paths = traced.paths.filter((path) => {
+      const xs = path.pts.filter((_, i) => i % 2 === 0);
+      const ys = path.pts.filter((_, i) => i % 2 === 1);
+      return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) >= speck;
+    });
+  }
   const k = 1 / crop.w;
   // A hat set over a letter is part of the letter, not a label of its own.
   const pieces = labels.map((run) => ({ x: run.x, width: run.width, str: run.text, y: run.y, size: run.size }));
@@ -382,14 +537,33 @@ function inkReader(ctx: CanvasRenderingContext2D, width: number, height: number)
   };
 }
 
-function overlaps(a: Box, b: Box): boolean {
-  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+function area(box: Box): number {
+  return box.width * box.height;
 }
 
-/** The left margin of the running text: the edge most lines start from. */
+/** How much of two boxes lies in both. */
+function shared(a: Box, b: Box): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+function unite(a: Box, b: Box): Box {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+
+/**
+ * The left margin of the running text: the edge most lines start from. Only
+ * lines of some length count — on a page of equations, the pieces of the
+ * formulas far outnumber the sentences, and all of them are set in.
+ */
 function leftOf(lines: Line[]): number {
   if (lines.length === 0) return 0;
-  const lefts = lines.map((l) => l.x0).sort((a, b) => a - b);
+  const widest = Math.max(...lines.map((l) => l.x1 - l.x0));
+  const long = lines.filter((l) => l.x1 - l.x0 >= widest * 0.5);
+  const lefts = (long.length >= 3 ? long : lines).map((l) => l.x0).sort((a, b) => a - b);
   return lefts[Math.floor(lefts.length * 0.12)];
 }
 
@@ -399,12 +573,17 @@ function rightOf(lines: Line[]): number {
   return rights[Math.floor(rights.length * 0.9)];
 }
 
-/** The usual distance between two lines of running text. */
+/**
+ * The usual distance between two lines of running text: between two lines of
+ * a paragraph, that is, not the pieces of a fraction, which sit far closer.
+ */
 function leadingOf(lines: Line[], bodySize: number): number {
+  const widest = Math.max(0, ...lines.map((l) => l.x1 - l.x0));
+  const long = lines.filter((l) => l.x1 - l.x0 >= widest * 0.5);
   const gaps: number[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const gap = lines[i].y - lines[i - 1].y;
-    if (gap > 0.5 && gap < bodySize * 4) gaps.push(gap);
+  for (let i = 1; i < long.length; i++) {
+    const gap = long[i].y - long[i - 1].y;
+    if (gap > bodySize * 0.8 && gap < bodySize * 2) gaps.push(gap);
   }
   if (gaps.length === 0) return bodySize * 1.2;
   gaps.sort((a, b) => a - b);

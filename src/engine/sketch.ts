@@ -10,7 +10,7 @@
  * the layout, which owns the letters).
  */
 import { clamp, gaussian, type Rng } from './random';
-import type { InkStroke, Sketch } from './types';
+import type { InkStroke, Sketch, SketchLabel } from './types';
 
 export interface SketchPlacement {
   /** Top-left corner and width of the figure on the page. Its height follows from the aspect. */
@@ -280,6 +280,151 @@ function hatching(pts: number[], style: SketchStyle, m: number, rng: Rng, degree
         taper: true,
       });
     }
+  }
+  return out;
+}
+
+/** One piece of a sketch cut apart, and how much of the whole one's width it spans. */
+export interface SketchPiece {
+  sketch: Sketch;
+  share: number;
+}
+
+/** Something in a sketch, and the box it takes up. */
+interface Item {
+  path?: Sketch['paths'][number];
+  fill?: Sketch['fills'][number];
+  label?: SketchLabel;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/**
+ * Cut a copied line that is too long to be written across the page into
+ * pieces no wider than `most` of it, the way a writer carries a line on: a
+ * formula set on two rows is written as two, and a row too long for the page
+ * breaks between words — never through a fraction, and never leaving a
+ * bracket on a line by itself. Each piece keeps just the room its own
+ * contents need. A line with nowhere to break comes back whole.
+ */
+export function splitSketch(sketch: Sketch, most: number): SketchPiece[] {
+  const whole = [{ sketch, share: 1 }];
+  if (most >= 1) return whole;
+  const bounds = (pts: number[]) => {
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i + 1 < pts.length; i += 2) {
+      x0 = Math.min(x0, pts[i]);
+      x1 = Math.max(x1, pts[i]);
+      y0 = Math.min(y0, pts[i + 1]);
+      y1 = Math.max(y1, pts[i + 1]);
+    }
+    return { x0, x1, y0, y1 };
+  };
+  const items: Item[] = [
+    ...sketch.paths.map((path) => ({ path, ...bounds(path.pts) })),
+    ...sketch.fills.map((fill) => ({ fill, ...bounds(fill.pts) })),
+    ...sketch.labels.flatMap(words).map((label) => ({
+      label,
+      x0: label.x,
+      x1: label.x + label.w,
+      y0: label.y - label.size * 0.8,
+      y1: label.y + label.size * 0.25,
+    })),
+  ].filter((item) => Number.isFinite(item.x0));
+  const sizes = sketch.labels.map((label) => label.size).sort((a, b) => a - b);
+  if (sizes.length === 0) return whole;
+  const size = sizes[Math.floor(sizes.length / 2)];
+
+  // Rows first: whatever stands apart from what is above and below it.
+  const rows: Item[][] = [];
+  let bottom = -Infinity;
+  for (const item of [...items].sort((a, b) => a.y0 - b.y0)) {
+    const row = rows[rows.length - 1];
+    if (row && item.y0 <= bottom + size * 0.6) {
+      row.push(item);
+      bottom = Math.max(bottom, item.y1);
+    } else {
+      rows.push([item]);
+      bottom = item.y1;
+    }
+  }
+
+  const pieces: Item[][] = [];
+  for (const row of rows) {
+    const x0 = Math.min(...row.map((item) => item.x0));
+    const x1 = Math.max(...row.map((item) => item.x1));
+    if (x1 - x0 <= most) {
+      pieces.push(row);
+      continue;
+    }
+    // Stretches of the row with something in them; a word is one.
+    const spans: { x0: number; x1: number; items: Item[]; words: boolean }[] = [];
+    for (const item of [...row].sort((a, b) => a.x0 - b.x0)) {
+      const last = spans[spans.length - 1];
+      if (last && item.x0 <= last.x1 + size * 0.12) {
+        last.x1 = Math.max(last.x1, item.x1);
+        last.items.push(item);
+        last.words ||= item.label !== undefined;
+      } else spans.push({ x0: item.x0, x1: item.x1, items: [item], words: item.label !== undefined });
+    }
+    let piece: Item[] = [];
+    let from = spans[0].x0;
+    spans.forEach((span, i) => {
+      // Break before this stretch only between words, never after a bracket.
+      const breakable = i > 0 && span.words && spans[i - 1].words;
+      if (breakable && span.x1 - from > most && piece.length > 0) {
+        pieces.push(piece);
+        piece = [];
+        from = span.x0;
+      }
+      piece.push(...span.items);
+    });
+    if (piece.length > 0) pieces.push(piece);
+  }
+  if (pieces.length < 2) return whole;
+
+  return pieces.map((piece) => {
+    const pad = Math.max(sketch.lineWidth * 2, 0.004);
+    const x0 = Math.min(...piece.map((item) => item.x0)) - pad;
+    const y0 = Math.min(...piece.map((item) => item.y0)) - pad;
+    const w = Math.max(...piece.map((item) => item.x1)) + pad - x0;
+    const h = Math.max(...piece.map((item) => item.y1)) + pad - y0;
+    const k = 1 / w;
+    const move = (pts: number[]) => pts.map((v, i) => (v - (i % 2 === 0 ? x0 : y0)) * k);
+    return {
+      share: w,
+      sketch: {
+        ...sketch,
+        aspect: w / h,
+        paths: piece.flatMap((item) => (item.path ? [{ ...item.path, pts: move(item.path.pts) }] : [])),
+        fills: piece.flatMap((item) => (item.fill ? [{ ...item.fill, pts: move(item.fill.pts), area: item.fill.area * k * k }] : [])),
+        labels: piece.flatMap((item) =>
+          item.label ? [{ ...item.label, x: (item.label.x - x0) * k, y: (item.label.y - y0) * k, w: item.label.w * k, size: item.label.size * k }] : [],
+        ),
+        lineWidth: sketch.lineWidth * k,
+      },
+    };
+  });
+}
+
+/**
+ * A label of several words, as one label per word, each given its share of
+ * the width by its number of letters: near enough to break a line between.
+ */
+function words(label: SketchLabel): SketchLabel[] {
+  const parts = label.text.split(/(\s+)/);
+  if (parts.filter((part) => part.trim() !== '').length < 2) return [label];
+  const total = label.text.length;
+  const out: SketchLabel[] = [];
+  let at = 0;
+  for (const part of parts) {
+    if (part.trim() !== '') out.push({ ...label, text: part, x: label.x + (label.w * at) / total, w: (label.w * part.length) / total });
+    at += part.length;
   }
   return out;
 }

@@ -546,7 +546,9 @@ export function assemble(pages: PageLines[], opts: PdfOptions): string {
           Math.abs(previous.size - line.size) < line.size * 0.05 &&
           !/[.!?:]$/.test(previous.text)
         ) {
-          last.text = stripTrailingDot(`${last.text} ${line.text}`);
+          // A list of topics set over two lines keeps its separator at the break.
+          const dot = / [\u00b7\u2022] /.test(last.text) && / [\u00b7\u2022] /.test(line.text) ? ' \u00b7' : '';
+          last.text = stripTrailingDot(`${last.text}${dot} ${line.text}`);
         } else {
           emit({ kind: 'heading', text: stripTrailingDot(line.text), indent: line.x0, level });
         }

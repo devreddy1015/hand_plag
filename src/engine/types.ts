@@ -222,6 +222,11 @@ export interface Sketch {
   lineWidth: number;
   /** Drawn by hand on the pad already: its lines are the writer's own and are not shaken again. */
   handmade?: boolean;
+  /**
+   * A sentence copied out whole, for the maths in it: written from the margin
+   * on the ruled line, not centred like a displayed equation.
+   */
+  prose?: boolean;
 }
 
 export interface SketchLabel {

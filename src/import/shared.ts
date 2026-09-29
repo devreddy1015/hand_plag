@@ -61,7 +61,7 @@ export function cleanText(input: string): string {
     // A glyph from a font with no character map comes out as a control code
     // or a private-use point. Standing alone between words it is an ornament
     // separating them — "Vector Analysis • Electrostatics" — so write a dot.
-    .replace(/(^|\s)[\x80-\x9f\ue000-\uf8ff](?=\s|$)/g, '$1\u2022')
+    .replace(/(^|\s)[\x80-\x9f\ue000-\uf8ff](?=\s|$)/g, '$1\u00b7')
     // Control characters, but keep tab and newline.
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
     // A grave accent TeX set before its letter: Amp`ere is Ampère.

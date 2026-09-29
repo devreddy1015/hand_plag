@@ -146,7 +146,7 @@ const INLINE_RULES: Rule[] = [
   { re: /\*\*(?=\S)([\s\S]*?\S)\*\*/g, bits: EM_BOLD },
   { re: /__(?=\S)([\s\S]*?\S)__/g, bits: EM_UNDERLINE },
   { re: /(?<![\p{L}\p{N}])\*(?=\S)([^*]*?\S)\*(?![\p{L}\p{N}])/gu, bits: EM_ITALIC },
-  { re: /(?<![\p{L}\p{N}])_(?=\S)([^_]*?\S)_(?![\p{L}\p{N}])/gu, bits: EM_ITALIC },
+  { re: /(?<![\p{L}\p{N}\p{M}])_(?=\S)([^_]*?\S)_(?![\p{L}\p{N}])/gu, bits: EM_ITALIC },
   { re: /`(?=\S)([^`]*?)`/g, bits: 0 },
 ];
 
@@ -155,11 +155,12 @@ const LINK = /\[([^\]]+)\]\((?:[^)\s]+)(?:\s+"[^"]*")?\)/g;
 // Superscripts and subscripts. The short forms are kept to what is
 // unambiguous in running text: a caret is rarely anything else, but an
 // underscore sits inside names, so only digits follow one without braces.
+// A letter may wear an accent — the bar of Ā — before its script.
 const SCRIPT_RULES: Rule[] = [
   { re: /\^\{([^{}]+)\}/g, bits: EM_SUP },
-  { re: /(?<=[\p{L}\p{N})\]])_\{([^{}]+)\}/gu, bits: EM_SUB },
-  { re: /(?<=[\p{L}\p{N})\]])\^([+-]?(?:\d+(?:\.\d+)?|\p{L}+))/gu, bits: EM_SUP },
-  { re: /(?<=[\p{L})\]])_(\d+)/gu, bits: EM_SUB },
+  { re: /(?<=[\p{L}\p{N}\p{M})\]])_\{([^{}]+)\}/gu, bits: EM_SUB },
+  { re: /(?<=[\p{L}\p{N}\p{M})\]])\^([+-]?(?:\d+(?:\.\d+)?|\p{L}+))/gu, bits: EM_SUP },
+  { re: /(?<=[\p{L}\p{M})\]])_(\d+)/gu, bits: EM_SUB },
 ];
 
 const SUPERSCRIPTS: Record<string, string> = {

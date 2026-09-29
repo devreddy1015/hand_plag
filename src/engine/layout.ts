@@ -2,7 +2,7 @@ import { EM_BOLD, EM_ITALIC, EM_SUB, EM_SUP, EM_UNDERLINE, parseBlocks, type Blo
 import { clamp, createDrift, createNoise1D, gaussian, hashInts, hashString, mulberry32, smoothstep, type Rng } from './random';
 import { gapAfterFactor, gapBeforeFactor, graphemes, hyphenPoint, isRtlParagraph, tokenize, type Token } from './segment';
 import { nameDateFields } from './paper';
-import { sketchStrokes } from './sketch';
+import { sketchStrokes, splitSketch } from './sketch';
 import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, PlacedImage, Settings, Sketch, SketchLabel, TextArea } from './types';
 
 export { PAGE_BREAK } from './markup';
@@ -149,6 +149,24 @@ interface Line {
 }
 
 /** What the layout needs to know about a picture to make room for it and draw it. */
+/** Where most of a copied sentence's words stand: the baseline of its own line, not its fractions'. */
+function mainBaseline(sketch: Sketch): number {
+  const weight = new Map<number, number>();
+  for (const label of sketch.labels) {
+    const at = [...weight.keys()].find((y) => Math.abs(y - label.y) < label.size * 0.3) ?? label.y;
+    weight.set(at, (weight.get(at) ?? 0) + label.w);
+  }
+  let best = 1 / Math.max(0.05, sketch.aspect);
+  let most = -1;
+  for (const [y, w] of weight) {
+    if (w > most) {
+      best = y;
+      most = w;
+    }
+  }
+  return best;
+}
+
 export interface ImageInfo {
   /** Natural size, in any units: only the shape is used. */
   width: number;
@@ -686,19 +704,47 @@ export function layoutDocument(
       const typical = sizes[Math.floor(sizes.length / 2)];
       if (typical > 0) width = Math.min(column, Math.max(width, (0.7 * fontPx * handX) / (PRINT_X * typical)));
     }
-    let height = width * aspect;
     // Never taller than most of a column, or it could never be placed at all.
     const maxHeight = Math.max(1, Math.floor(areaNow.lines.length * 0.85)) * spacing - spacing * 0.4;
-    if (height > maxHeight) {
-      height = maxHeight;
-      width = height / aspect;
+    const fit = (wide: number, tall: number) => {
+      let w = wide;
+      let h = wide * tall;
+      if (h > maxHeight) {
+        h = maxHeight;
+        w = h / tall;
+      }
+      return { width: w, height: h, slots: Math.max(1, Math.ceil((h + spacing * 0.45) / spacing)) };
+    };
+    // A line copied out whole that is too long to go across the page is
+    // carried on to the next line, broken between words the way it would be
+    // written — not squeezed until its words are too small to read.
+    // (A displayed formula too wide is drawn smaller instead: cut in two, its
+    // brackets and fractions would not survive.)
+    const wanted = natural?.widthUnits;
+    if (sketch?.prose && natural?.kind === 'math' && wanted && wanted > column * 1.1) {
+      const pieces = splitSketch(sketch, column / wanted);
+      if (pieces.length > 1) {
+        const parts = pieces.map((piece) => ({ sketch: piece.sketch, ...fit(Math.min(column, piece.share * wanted), 1 / piece.sketch.aspect) }));
+        return { natural, parts, slots: parts[0].slots };
+      }
     }
-    const slots = Math.max(1, Math.ceil((height + spacing * 0.45) / spacing));
-    return { natural, sketch, width, height, slots };
+    const part = { sketch, ...fit(width, aspect) };
+    return { natural, parts: [part], slots: part.slots };
   };
 
   const placeImage = (block: Block, bi: number): void => {
-    const { natural, sketch, width, height, slots } = imageFootprint(block);
+    const { natural, parts } = imageFootprint(block);
+    parts.forEach((part, pn) => placePart(block, natural, part, bi, pn));
+  };
+
+  const placePart = (
+    block: Block,
+    natural: ImageInfo | null,
+    part: { sketch: Sketch | undefined; width: number; height: number; slots: number },
+    bi: number,
+    pn: number,
+  ): void => {
+    const { sketch, width, height, slots } = part;
     const slot = takeSlot(slots);
     if (!slot) {
       truncated += 1;
@@ -706,11 +752,22 @@ export function layoutDocument(
     }
     globalLine += slots;
 
-    const rng = mulberry32(hashInts(s.seed, 0x1a3e, bi));
+    const rng = mulberry32(pn === 0 ? hashInts(s.seed, 0x1a3e, bi) : hashInts(s.seed, 0x1a3e, bi, pn));
     const bandTop = slot.y - (slots - 1) * spacing - spacing * 0.78;
     const free = slots * spacing - spacing * 0.3 - height;
-    const x = slot.area.left + (slot.area.right - slot.area.left - width) / 2 + gaussian(rng) * spacing * 0.07;
-    const y = bandTop + Math.max(0, free) / 2;
+    let x = slot.area.left + (slot.area.right - slot.area.left - width) / 2 + gaussian(rng) * spacing * 0.07;
+    let y = bandTop + Math.max(0, free) / 2;
+    if (sketch?.prose) {
+      // A sentence starts at the margin, and its words sit on the ruling.
+      x = slot.area.left + Math.abs(gaussian(rng)) * spacing * 0.05;
+      const baseline = mainBaseline(sketch) * width;
+      let best = Infinity;
+      for (let k = 0; k < slots; k++) {
+        const at = bandTop + spacing * 0.78 + k * spacing - baseline;
+        if (Math.abs(at - y) < Math.abs(best - y)) best = at;
+      }
+      y = best;
+    }
     // A print stuck on sits a little crooked. A figure drawn on ruled paper is
     // lined up with the ruling, as a writer does by eye.
     const tilt = sketch ? 0.3 : 0.9;
@@ -731,7 +788,7 @@ export function layoutDocument(
         const printed = label.size * width;
         const hand = (printed * PRINT_X) / handX;
         const em = natural?.kind === 'math' ? clamp(hand, fontPx * 0.4, fontPx * 1.3) : clamp(hand, fontPx * 0.58, fontPx * 0.95);
-        writeLabel(slot.page, label, { x, y, width, height, rotation }, em, hashInts(s.seed, 0x1abe, bi, li));
+        writeLabel(slot.page, label, { x, y, width, height, rotation }, em, pn === 0 ? hashInts(s.seed, 0x1abe, bi, li) : hashInts(s.seed, 0x1abe, bi, li, pn));
       });
       if (s.diagramFrame) slot.page.strokes.push(...frameStrokes(x, y, width, height, fontPx, rng));
       return;
