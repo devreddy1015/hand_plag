@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   writerName: '',
   writerId: '',
-  writerEveryPage: false,
+  writerEveryPage: true,
 
   messiness: 0.5,
   corrections: 0.12,

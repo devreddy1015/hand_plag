@@ -515,6 +515,22 @@ describe('what gets written', () => {
     expect(drawn(doc)).toBe('say"hi"...');
   });
 
+  it('heads every sheet with the name and ID', () => {
+    const doc = layout(lorem(2000), { writerName: 'Asha', writerId: '42' });
+    expect(doc.pages.length).toBeGreaterThan(2);
+    for (const page of doc.pages) {
+      const text = page.glyphs.map((g) => g.text).join('');
+      expect(text).toContain('Asha');
+      expect(text).toContain('ID:42');
+    }
+  });
+
+  it('heads only the first sheet when asked to', () => {
+    const doc = layout(lorem(2000), { writerName: 'Asha', writerId: '42', writerEveryPage: false });
+    expect(doc.pages[0].glyphs.map((g) => g.text).join('')).toContain('Asha');
+    expect(doc.pages[1].glyphs.map((g) => g.text).join('')).not.toContain('Asha');
+  });
+
   it('raises superscripts and drops subscripts, smaller', () => {
     const doc = layout('x^2 H_2', { markdown: true, messiness: 0 });
     const [x, two, h, sub] = doc.pages[0].glyphs;

@@ -136,7 +136,7 @@ export interface Settings {
   writerName: string;
   /** The writer's ID or roll number, written beside the name. Empty leaves it off. */
   writerId: string;
-  /** Write the name and ID at the top of every sheet, not only the first. */
+  /** Write the name and ID at the top of every sheet, not only the first. On by default. */
   writerEveryPage: boolean;
 
   /** 0 = tidy, 1 = very messy. 0.5 is a natural default. */
