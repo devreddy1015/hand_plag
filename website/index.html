@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Handscript: turn typed text and PDFs into handwriting</title>
+    <meta
+      name="description"
+      content="Turn typed text, PDFs and Word files into realistic handwriting on real paper, then download a PDF or PNG. Free, no sign-up, no page limits, and nothing leaves your browser."
+    />
+    <meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="Handscript" />
+    <meta property="og:description" content="Turn typed text, PDFs and Word files into realistic handwriting on paper." />
+    <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23fdfcf7'/%3E%3Cpath d='M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4' fill='none' stroke='%231d3b8f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#stage-scroll">Skip to the page preview</a>
+
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true" class="brand-mark">
+          <path d="M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4" />
+        </svg>
+        <span>Handscript</span>
+      </div>
+      <p class="tagline">Text, PDF or Word in. Handwriting out. Nothing leaves this browser.</p>
+      <div class="topbar-actions">
+        <label class="button small" id="import-label">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <path d="M10 14V3m0 0L6 7m4-4 4 4M3 13v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+          </svg>
+          Upload PDF or Word
+          <input type="file" id="import-file" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
+        </label>
+        <button type="button" class="button primary small" id="quick-pdf" title="Download every page as a PDF">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <path d="M10 3v11m0 0-4-4m4 4 4-4M3 15v1a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1" />
+          </svg>
+          Download PDF
+        </button>
+        <button type="button" class="ghost small" id="toggle-advanced" aria-pressed="false">More options</button>
+      </div>
+    </header>
+
+    <main class="app">
+      <aside class="panel" aria-label="Settings">
+        <!-- The simple view: three steps, and the choices most people make. -->
+        <div class="easy" id="easy">
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">1</span>
+              <h2>Your text</h2>
+              <span class="muted" id="easy-count"></span>
+            </div>
+            <textarea id="easy-text" data-key="text" spellcheck="true" rows="8" aria-label="Text to handwrite" placeholder="Type or paste your text here, or upload a PDF or Word file."></textarea>
+            <div class="row wrap">
+              <label class="button small">
+                Upload PDF or Word
+                <input type="file" id="easy-import" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
+              </label>
+              <button type="button" class="ghost small" id="easy-draw">Draw a diagram</button>
+              <button type="button" class="ghost small" id="easy-clear">Clear</button>
+            </div>
+            <div class="writer">
+              <label class="field"><span>Your name</span><input type="text" data-key="writerName" autocomplete="name" spellcheck="false" placeholder="Written at the top" /></label>
+              <label class="field"><span>ID / roll no.</span><input type="text" data-key="writerId" autocomplete="off" spellcheck="false" /></label>
+              <label class="check"><input type="checkbox" data-key="writerEveryPage" /> <span>Head every page, not just the first</span></label>
+            </div>
+            <p class="hint" id="easy-note">Diagrams, charts and equations in a PDF are drawn again by hand.</p>
+          </section>
+
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">2</span>
+              <h2>Pick a look</h2>
+            </div>
+            <div class="looks" id="easy-looks"></div>
+
+            <div class="easy-row">
+              <span class="easy-label">Handwriting</span>
+              <div class="chips hands" id="easy-hands"></div>
+            </div>
+            <button type="button" class="own-cta" id="easy-own">
+              <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+                <path d="M3 17c2-1 3-4 5-4s1 3 3 3 2-5 4-5 1 3 2 3M13 3l4 4-7 7H6v-4z" />
+              </svg>
+              <span><b>Use my own handwriting</b><small>Write the alphabet once. Nobody can match it to a font.</small></span>
+            </button>
+
+            <div class="easy-row">
+              <span class="easy-label">Paper</span>
+              <div class="chips papers" id="easy-papers"></div>
+            </div>
+
+            <div class="easy-row">
+              <span class="easy-label">Pen</span>
+              <div class="segmented" data-segmented="pen">
+                <button type="button" data-value="ballpoint">Ballpoint</button>
+                <button type="button" data-value="gel">Gel</button>
+                <button type="button" data-value="fountain">Fountain</button>
+                <button type="button" data-value="pencil">Pencil</button>
+              </div>
+            </div>
+            <div class="easy-row">
+              <span class="easy-label">Ink</span>
+              <div class="swatches" data-swatches="inkColor">
+                <button type="button" class="swatch" data-value="#1d3b8f" title="Blue"></button>
+                <button type="button" class="swatch" data-value="#2a1f63" title="Blue-black"></button>
+                <button type="button" class="swatch" data-value="#1f2024" title="Black"></button>
+                <button type="button" class="swatch" data-value="#b3261e" title="Red"></button>
+                <button type="button" class="swatch" data-value="#1f6b3a" title="Green"></button>
+              </div>
+            </div>
+            <div class="easy-row">
+              <span class="easy-label">Handed in as</span>
+              <div class="segmented" data-segmented="finish">
+                <button type="button" data-value="none">The page</button>
+                <button type="button" data-value="phone">App scan</button>
+                <button type="button" data-value="scan">Scanner</button>
+                <button type="button" data-value="photo">Photo</button>
+              </div>
+            </div>
+            <label class="field range">
+              <span>Neat or messy <output data-for="messiness" data-format="neat"></output></span>
+              <input type="range" data-key="messiness" min="0" max="1" step="0.01" />
+            </label>
+            <label class="field range">
+              <span>Letter size <output data-for="letterSize" data-format="pct"></output></span>
+              <input type="range" data-key="letterSize" min="0.18" max="0.6" step="0.01" />
+            </label>
+          </section>
+
+          <section class="step">
+            <div class="step-head">
+              <span class="num" aria-hidden="true">3</span>
+              <h2>Download</h2>
+              <span class="muted" id="easy-pages"></span>
+            </div>
+            <div class="row">
+              <button type="button" class="primary big" id="easy-pdf">Download PDF</button>
+              <button type="button" class="big" id="easy-png">Images</button>
+            </div>
+            <progress id="easy-progress" max="1" value="0" hidden></progress>
+            <p class="hint" id="easy-status" role="status" aria-live="polite">Free, no sign-up, no watermark. Nothing leaves this browser.</p>
+          </section>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Setting groups">
+          <button type="button" role="tab" id="tab-text" aria-controls="panel-text" aria-selected="true">Text</button>
+          <button type="button" role="tab" id="tab-paper" aria-controls="panel-paper" aria-selected="false">Paper</button>
+          <button type="button" role="tab" id="tab-hand" aria-controls="panel-hand" aria-selected="false">Hand</button>
+          <button type="button" role="tab" id="tab-real" aria-controls="panel-real" aria-selected="false">Realism</button>
+          <button type="button" role="tab" id="tab-export" aria-controls="panel-export" aria-selected="false">Save</button>
+        </div>
+
+        <!-- ------------------------------------------------------------ text -->
+        <section class="tabpanel" id="panel-text" role="tabpanel" aria-labelledby="tab-text">
+          <section class="card">
+            <div class="card-head">
+              <h2>Your text</h2>
+              <span class="muted" id="char-count"></span>
+            </div>
+            <textarea id="text" data-key="text" spellcheck="true" rows="12" aria-label="Text to handwrite"></textarea>
+            <div class="row wrap">
+              <label class="button ghost small">
+                Import file
+                <input type="file" id="import-text" accept=".pdf,.docx,.txt,.md,.markdown,.text,.csv" hidden />
+              </label>
+              <button type="button" class="ghost small" id="reflow-text" data-advanced title="Join lines that were wrapped at a fixed width">
+                Join wrapped lines
+              </button>
+              <label class="button ghost small">
+                Add a picture
+                <input type="file" id="diagram-upload" accept="image/*" hidden />
+              </label>
+              <button type="button" class="ghost small" id="draw-diagram">Draw a diagram</button>
+              <button type="button" class="ghost small" id="sample-text">Sample</button>
+              <button type="button" class="ghost small" id="clear-text">Clear</button>
+            </div>
+            <p class="hint" id="import-note" hidden></p>
+            <label class="check" data-advanced>
+              <input type="checkbox" data-key="markdown" />
+              <span>Read structure: <code>#</code> headings, <code>-</code> lists, <code>**bold**</code></span>
+            </label>
+            <p class="hint">Put <code>[[page]]</code> on a line of its own to start a new sheet.</p>
+            <div class="writer">
+              <label class="field"><span>Your name</span><input type="text" data-key="writerName" autocomplete="name" spellcheck="false" placeholder="Written at the top" /></label>
+              <label class="field"><span>ID / roll no.</span><input type="text" data-key="writerId" autocomplete="off" spellcheck="false" /></label>
+              <label class="check"><input type="checkbox" data-key="writerEveryPage" /> <span>Head every page, not just the first</span></label>
+            </div>
+          </section>
+
+          <section class="card" data-advanced>
+            <h2>Reading imported files</h2>
+            <label class="check"><input type="checkbox" id="opt-page-breaks" /> <span>Keep the source page breaks</span></label>
+            <label class="check"><input type="checkbox" id="opt-headings" /> <span>Recover headings</span></label>
+            <label class="check"><input type="checkbox" id="opt-heads" /> <span>Drop running headers, footers and page numbers</span></label>
+            <label class="check"><input type="checkbox" id="opt-diagrams" /> <span>Bring the diagrams and charts over</span></label>
+            <p class="hint">
+              PDFs are read in this browser with pdf.js. A PDF of scanned photographs holds no text to read, so it needs OCR first.
+            </p>
+          </section>
+
+          <section class="card">
+            <h2>Quick looks</h2>
+            <div class="presets" id="presets"></div>
+          </section>
+        </section>
+
+        <!-- ----------------------------------------------------------- paper -->
+        <section class="tabpanel" id="panel-paper" role="tabpanel" aria-labelledby="tab-paper" hidden>
+          <section class="card">
+            <h2>Kind of page</h2>
+            <div class="gallery" id="templates"></div>
+          </section>
+
+          <section class="card">
+            <h2>Sheet</h2>
+            <div class="grid-2">
+              <label class="field">
+                <span>Size</span>
+                <select data-key="paperSize" id="paper-size"></select>
+              </label>
+              <label class="field" data-advanced>
+                <span>Ruling</span>
+                <select data-key="paperStyle">
+                  <option value="ruled">Ruled</option>
+                  <option value="plain">Plain</option>
+                  <option value="grid">Grid</option>
+                  <option value="dotted">Dotted</option>
+                  <option value="four-line">Four-line</option>
+                  <option value="seyes">Séyès</option>
+                </select>
+              </label>
+            </div>
+            <label class="field range">
+              <span>Line spacing <output data-for="lineSpacing" data-format="mm"></output></span>
+              <input type="range" data-key="lineSpacing" min="4" max="16" step="0.25" />
+            </label>
+            <div class="field">
+              <span>Paper colour</span>
+              <div class="swatches" data-swatches="paperColor">
+                <button type="button" class="swatch" data-value="#fdfcf7" title="White"></button>
+                <button type="button" class="swatch" data-value="#fefdf9" title="Bright white"></button>
+                <button type="button" class="swatch" data-value="#f7efdc" title="Ivory"></button>
+                <button type="button" class="swatch" data-value="#fbf1a6" title="Legal pad yellow"></button>
+                <button type="button" class="swatch" data-value="#e9e2d1" title="Recycled"></button>
+                <button type="button" class="swatch" data-value="#f1f6ec" title="Pale green"></button>
+                <input type="color" data-key="paperColor" aria-label="Custom paper colour" />
+              </div>
+            </div>
+            <div class="grid-2" data-advanced>
+              <label class="field">
+                <span>Rule colour</span>
+                <input type="color" data-key="ruleColor" />
+              </label>
+              <label class="field">
+                <span>Margin colour</span>
+                <input type="color" data-key="marginColor" />
+              </label>
+            </div>
+            <div class="checks row wrap">
+              <label class="check"><input type="checkbox" data-key="landscape" /> <span>Landscape</span></label>
+              <label class="check"><input type="checkbox" data-key="texture" /> <span>Paper grain and pen grooves</span></label>
+            </div>
+            <fieldset class="margins" data-advanced>
+              <legend>Margins (mm)</legend>
+              <label>Top <input type="number" data-key="margins.top" min="0" max="120" step="1" /></label>
+              <label>Bottom <input type="number" data-key="margins.bottom" min="0" max="120" step="1" /></label>
+              <label>Binding <input type="number" data-key="margins.left" min="0" max="120" step="1" /></label>
+              <label>Outer <input type="number" data-key="margins.right" min="0" max="120" step="1" /></label>
+            </fieldset>
+          </section>
+
+          <section class="card" data-advanced>
+            <h2>Printed on the sheet</h2>
+            <div class="grid-2">
+              <label class="field">
+                <span>Margin rule</span>
+                <select data-key="features.marginRule">
+                  <option value="none">None</option>
+                  <option value="single">Single line</option>
+                  <option value="double">Double line</option>
+                  <option value="box">Box around the page</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Binding holes</span>
+                <select data-key="features.holes">
+                  <option value="none">None</option>
+                  <option value="punch2">Two holes</option>
+                  <option value="punch3">Three holes</option>
+                  <option value="spiral">Spiral wire</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label class="field">
+                <span>Page numbers</span>
+                <select data-key="features.pageNumber">
+                  <option value="none">None</option>
+                  <option value="printed">Printed</option>
+                  <option value="handwritten">Written by hand</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Columns</span>
+                <select data-key="features.columns" data-number="1">
+                  <option value="1">One</option>
+                  <option value="2">Two</option>
+                </select>
+              </label>
+            </div>
+            <div class="checks">
+              <label class="check"><input type="checkbox" data-key="features.headerRule" /> <span>Header rule at the top</span></label>
+              <label class="check"><input type="checkbox" data-key="features.nameDateLine" /> <span>Printed name and date line</span></label>
+              <label class="check"><input type="checkbox" data-key="features.columnDivider" /> <span>Line down the middle of two columns</span></label>
+              <label class="check"><input type="checkbox" data-key="features.mirrorEvenPages" /> <span>Mirror the binding on alternate pages</span></label>
+              <label class="check"><input type="checkbox" data-key="features.tornEdge" /> <span>Torn-out edge</span></label>
+              <label class="check"><input type="checkbox" data-key="features.showThrough" /> <span>Written on both sides: the back shows through</span></label>
+            </div>
+            <div class="grid-2">
+              <label class="field range">
+                <span>Cue column <output data-for="features.cueColumn" data-format="mm"></output></span>
+                <input type="range" data-key="features.cueColumn" min="0" max="80" step="1" />
+              </label>
+              <label class="field range">
+                <span>Summary box <output data-for="features.summaryBox" data-format="mm"></output></span>
+                <input type="range" data-key="features.summaryBox" min="0" max="120" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>How it was captured</h2>
+            <div class="segmented" data-segmented="finish">
+              <button type="button" data-value="none">Flat</button>
+              <button type="button" data-value="phone">App scan</button>
+              <button type="button" data-value="scan">Scanner</button>
+              <button type="button" data-value="photo">Photo</button>
+            </div>
+            <p class="hint">
+              An app scan is what a phone scanning app hands in: white paper, strong ink, a slightly bowed sheet. A scanner leaves
+              a grey cast and a crooked page; a photo keystones on a desk in warm light.
+            </p>
+          </section>
+        </section>
+
+        <!-- ------------------------------------------------------------ hand -->
+        <section class="tabpanel" id="panel-hand" role="tabpanel" aria-labelledby="tab-hand" hidden>
+          <section class="card own-hand">
+            <div class="card-head">
+              <h2>Your own handwriting</h2>
+            </div>
+            <p class="hint">
+              Write each letter three times with a finger, a stylus or the mouse, and the page is written in your hand. It can't
+              be matched to any font, because it isn't one. It stays in this browser.
+            </p>
+            <div class="own-hands" id="own-hands"></div>
+            <button type="button" class="primary" id="hand-new">Write your alphabet</button>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Handwriting</h2>
+              <span class="muted" id="font-count"></span>
+            </div>
+            <div class="gallery fonts" id="fonts"></div>
+            <label class="button ghost small upload">
+              Upload your own handwriting font (.ttf, .otf, .woff)
+              <input type="file" id="font-upload" accept=".ttf,.otf,.woff,.woff2" hidden />
+            </label>
+          </section>
+
+          <section class="card">
+            <h2>Size and shape</h2>
+            <label class="field range">
+              <span>Letter size <output data-for="letterSize" data-format="pct"></output></span>
+              <input type="range" data-key="letterSize" min="0.18" max="0.6" step="0.01" />
+            </label>
+            <label class="field range">
+              <span>Slant <output data-for="slant" data-format="deg"></output></span>
+              <input type="range" data-key="slant" min="-15" max="25" step="1" />
+            </label>
+            <label class="field range" data-advanced>
+              <span>Letter spacing <output data-for="letterSpacing" data-format="signed-pct"></output></span>
+              <input type="range" data-key="letterSpacing" min="-0.06" max="0.2" step="0.005" />
+            </label>
+            <label class="field range" data-advanced>
+              <span>Word spacing <output data-for="wordSpacing" data-format="times"></output></span>
+              <input type="range" data-key="wordSpacing" min="0.5" max="3" step="0.05" />
+            </label>
+            <label class="field range" data-advanced>
+              <span>Fills the line <output data-for="lineFill" data-format="pct"></output></span>
+              <input type="range" data-key="lineFill" min="0" max="1" step="0.05" />
+            </label>
+            <p class="hint" data-advanced>At a high setting the writer crams, runs past the margin and hyphenates rather than leave a line short.</p>
+            <label class="field range" data-advanced>
+              <span>Paragraph indent <output data-for="paragraphIndent" data-format="mm"></output></span>
+              <input type="range" data-key="paragraphIndent" min="0" max="25" step="1" />
+            </label>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Diagrams</h2>
+              <span class="muted" id="diagram-count"></span>
+            </div>
+            <div class="segmented" data-segmented="diagramStyle">
+              <button type="button" data-value="sketch">Copied out in pen</button>
+              <button type="button" data-value="pasted">Stuck on the page</button>
+            </div>
+            <label class="field range" data-advanced>
+              <span>Diagram width <output data-for="diagramScale" data-format="pct"></output></span>
+              <input type="range" data-key="diagramScale" min="0.25" max="1" step="0.01" />
+            </label>
+            <div class="checks" data-advanced>
+              <label class="check"><input type="checkbox" data-key="diagrams" /> <span>Draw the diagrams at all</span></label>
+              <label class="check"><input type="checkbox" data-key="diagramFrame" /> <span>Rule a box around each one</span></label>
+            </div>
+            <p class="hint">
+              Charts, flowcharts and equations from a PDF are traced and drawn again in your pen, with their labels written in
+              your hand. Photographs are stuck on as prints. Drag in a picture or draw your own from the Text tab.
+            </p>
+            <p class="hint" data-advanced>
+              Write <code>![caption](id)</code> to place one yourself. A figure with no picture behind it leaves a ruled box, the
+              way a page does before the diagram is drawn in.
+            </p>
+          </section>
+
+          <section class="card">
+            <h2>Pen</h2>
+            <div class="segmented wrap" data-segmented="pen">
+              <button type="button" data-value="ballpoint">Ballpoint</button>
+              <button type="button" data-value="gel">Gel</button>
+              <button type="button" data-value="rollerball">Rollerball</button>
+              <button type="button" data-value="fountain">Fountain</button>
+              <button type="button" data-value="calligraphy">Calligraphy</button>
+              <button type="button" data-value="felt">Felt tip</button>
+              <button type="button" data-value="pencil">Pencil</button>
+            </div>
+            <div class="field">
+              <span>Ink</span>
+              <div class="swatches" data-swatches="inkColor">
+                <button type="button" class="swatch" data-value="#1d3b8f" title="Blue"></button>
+                <button type="button" class="swatch" data-value="#2a1f63" title="Blue-black"></button>
+                <button type="button" class="swatch" data-value="#1f2024" title="Black"></button>
+                <button type="button" class="swatch" data-value="#b3261e" title="Red"></button>
+                <button type="button" class="swatch" data-value="#1f6b3a" title="Green"></button>
+                <button type="button" class="swatch" data-value="#48484a" title="Graphite"></button>
+                <input type="color" data-key="inkColor" aria-label="Custom ink colour" />
+              </div>
+            </div>
+            <label class="field range" data-advanced>
+              <span>Ink weight <output data-for="inkWeight" data-format="times"></output></span>
+              <input type="range" data-key="inkWeight" min="0" max="2.5" step="0.05" />
+            </label>
+          </section>
+        </section>
+
+        <!-- --------------------------------------------------------- realism -->
+        <section class="tabpanel" id="panel-real" role="tabpanel" aria-labelledby="tab-real" hidden>
+          <section class="card">
+            <div class="card-head">
+              <h2>How human</h2>
+              <button type="button" class="ghost small" id="reseed" title="Same settings, a different hand">New variation</button>
+            </div>
+            <label class="field range">
+              <span>Messiness <output data-for="messiness" data-format="pct"></output></span>
+              <input type="range" data-key="messiness" min="0" max="1" step="0.01" />
+            </label>
+            <label class="field range">
+              <span>Corrections <output data-for="corrections" data-format="pct"></output></span>
+              <input type="range" data-key="corrections" min="0" max="1" step="0.01" />
+            </label>
+            <p class="hint">
+              Corrections are the things a person does and a printer never would: a word started wrong and crossed out, one squeezed in
+              above a caret, a dot of ink left on the page.
+            </p>
+            <p class="hint" id="seed-note" data-advanced></p>
+          </section>
+
+          <section class="card" data-advanced>
+            <h2>Fine tuning</h2>
+            <label class="field range">
+              <span>Letter shapes <output data-for="jitter.shape" data-format="times"></output></span>
+              <input type="range" data-key="jitter.shape" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Baseline wobble <output data-for="jitter.baseline" data-format="times"></output></span>
+              <input type="range" data-key="jitter.baseline" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Letter tilt <output data-for="jitter.rotation" data-format="times"></output></span>
+              <input type="range" data-key="jitter.rotation" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Size variation <output data-for="jitter.scale" data-format="times"></output></span>
+              <input type="range" data-key="jitter.scale" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Spacing variation <output data-for="jitter.spacing" data-format="times"></output></span>
+              <input type="range" data-key="jitter.spacing" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Whole-word wander <output data-for="jitter.word" data-format="times"></output></span>
+              <input type="range" data-key="jitter.word" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Drift over the page <output data-for="jitter.drift" data-format="times"></output></span>
+              <input type="range" data-key="jitter.drift" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Line tilt <output data-for="jitter.lineSlope" data-format="times"></output></span>
+              <input type="range" data-key="jitter.lineSlope" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Ragged left edge <output data-for="jitter.indent" data-format="times"></output></span>
+              <input type="range" data-key="jitter.indent" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Tiring hand <output data-for="jitter.fatigue" data-format="times"></output></span>
+              <input type="range" data-key="jitter.fatigue" min="0" max="2" step="0.05" />
+            </label>
+            <label class="field range">
+              <span>Ink flow variation <output data-for="jitter.ink" data-format="times"></output></span>
+              <input type="range" data-key="jitter.ink" min="0" max="2" step="0.05" />
+            </label>
+          </section>
+        </section>
+
+        <!-- ---------------------------------------------------------- export -->
+        <section class="tabpanel" id="panel-export" role="tabpanel" aria-labelledby="tab-export" hidden>
+          <section class="card">
+            <h2>Download</h2>
+            <div class="grid-2">
+              <label class="field">
+                <span>Resolution</span>
+                <select id="dpi">
+                  <option value="150">150 DPI: small files</option>
+                  <option value="200" selected>200 DPI: balanced</option>
+                  <option value="300">300 DPI: print quality</option>
+                  <option value="400">400 DPI: very large</option>
+                </select>
+              </label>
+              <label class="field" data-advanced>
+                <span>Pages</span>
+                <select id="page-range">
+                  <option value="all">Every page</option>
+                  <option value="current">This page only</option>
+                  <option value="custom">Choose…</option>
+                </select>
+              </label>
+            </div>
+            <label class="field" id="range-field" data-advanced hidden>
+              <span>Which pages</span>
+              <input type="text" id="range-text" placeholder="e.g. 1-4, 7, 11-15" />
+            </label>
+            <label class="check" data-advanced><input type="checkbox" id="lossless" /> <span>Lossless images (bigger files)</span></label>
+            <div class="row">
+              <button type="button" class="primary" id="export-pdf">Download PDF</button>
+              <button type="button" id="export-png">Download images</button>
+            </div>
+            <button type="button" class="ghost small" id="cancel-export" hidden>Cancel</button>
+            <progress id="export-progress" max="1" value="0" hidden></progress>
+            <p class="hint" id="export-status" role="status" aria-live="polite"></p>
+            <p class="hint" id="export-estimate"></p>
+          </section>
+
+          <section class="card">
+            <h2>Share and start over</h2>
+            <div class="row wrap">
+              <button type="button" class="ghost small" id="copy-style" title="Copy a link that carries these settings" data-web-only>Copy style link</button>
+              <button type="button" class="ghost small" id="reset-all" title="Back to the default settings">Reset every setting</button>
+            </div>
+            <p class="hint" data-web-only>A style link carries the look — hand, paper, pen — never your text.</p>
+          </section>
+
+          <section class="card" data-advanced>
+            <h2>Printing it out</h2>
+            <p class="hint">
+              Print the PDF at 100% scale, not “fit to page”, or the margins and the ruling will no longer match real paper.
+            </p>
+          </section>
+
+          <p class="footnote">
+            Bundled fonts are under the SIL Open Font License or Apache 2.0 and ship with the app
+            (<a href="font-licenses.txt" target="_blank" rel="noopener">licences</a>). Fonts and documents you open stay on your device.
+          </p>
+        </section>
+      </aside>
+
+      <section class="stage" aria-label="Preview">
+        <div class="stage-bar">
+          <div class="pager">
+            <button type="button" class="icon" id="prev-page" aria-label="Previous page">‹</button>
+            <span id="page-label">Page 1 of 1</span>
+            <button type="button" class="icon" id="next-page" aria-label="Next page">›</button>
+          </div>
+          <span class="muted" id="status" role="status" aria-live="polite"></span>
+          <button type="button" class="ghost small" id="reseed-stage" title="Same settings, written again: every letter, line and slip comes out differently">
+            <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+              <path d="M16 7a6.5 6.5 0 0 0-11.5-2M4 3v3h3M4 13a6.5 6.5 0 0 0 11.5 2M16 17v-3h-3" />
+            </svg>
+            <span class="label">Write it again</span>
+          </button>
+          <label class="zoom">
+            <span class="sr-only">Zoom</span>
+            <select id="zoom">
+              <option value="fit">Fit</option>
+              <option value="0.75">75%</option>
+              <option value="1">100%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+        </div>
+        <div class="stage-body">
+          <div class="thumbs" id="thumbs" aria-label="Pages" role="tablist"></div>
+          <div class="stage-scroll" id="stage-scroll" tabindex="0">
+            <canvas id="preview" role="img" aria-label="Handwritten page preview"></canvas>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="drop-overlay" id="drop-overlay" hidden>
+      <div>Drop a PDF, Word file or text file to write it out by hand</div>
+    </div>
+
+    <dialog class="sheet" id="hand-dialog" aria-labelledby="hand-title">
+      <div class="sheet-head">
+        <h2 id="hand-title">Your handwriting</h2>
+        <input type="text" id="hand-name" maxlength="40" aria-label="Name of this hand" />
+        <form method="dialog"><button class="ghost icon" aria-label="Close">×</button></form>
+      </div>
+      <div class="hand-body">
+        <div class="hand-chars" id="hand-chars" aria-label="Characters"></div>
+        <div class="hand-work">
+          <p class="hand-prompt">Write <b id="hand-char">a</b> <span class="muted" id="hand-char-name"></span> three times, once in each box.</p>
+          <canvas id="hand-pad" class="pad" aria-label="Writing pad"></canvas>
+          <div class="row wrap pad-tools">
+            <button type="button" class="ghost small" id="hand-undo">Undo</button>
+            <button type="button" class="ghost small" id="hand-clear">Clear</button>
+            <span class="spacer"></span>
+            <button type="button" class="small" id="hand-prev">‹ Back</button>
+            <button type="button" class="primary small" id="hand-next">Next ›</button>
+          </div>
+          <p class="hint">
+            Write as you would on paper, sitting on the solid line, small letters up to the dashed one. Write them a little
+            differently each time, as you naturally would. <kbd>Enter</kbd> moves on; <kbd>Backspace</kbd> takes back a stroke.
+          </p>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <label class="field inline">
+          <span>Letters not written yet come from</span>
+          <select id="hand-standin"></select>
+        </label>
+        <span class="muted" id="hand-progress"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost small" id="hand-export">Save to a file</button>
+        <label class="button ghost small">Open a file<input type="file" id="hand-import" accept=".json,application/json" hidden /></label>
+        <button type="button" class="ghost small danger" id="hand-delete">Delete</button>
+        <button type="button" class="primary" id="hand-use">Write with this hand</button>
+      </div>
+    </dialog>
+
+    <dialog class="sheet" id="sketch-dialog" aria-labelledby="sketch-title">
+      <div class="sheet-head">
+        <h2 id="sketch-title">Draw a diagram</h2>
+        <span class="spacer"></span>
+        <form method="dialog"><button class="ghost icon" aria-label="Close">×</button></form>
+      </div>
+      <div class="sketch-body">
+        <canvas id="sketch-pad" class="pad" aria-label="Drawing sheet"></canvas>
+        <div class="row wrap pad-tools">
+          <button type="button" class="ghost small" id="sketch-undo">Undo</button>
+          <button type="button" class="ghost small" id="sketch-clear">Clear</button>
+          <input type="text" id="sketch-caption" placeholder="Caption (optional)" aria-label="Caption" />
+          <button type="button" class="primary" id="sketch-insert">Put it on the page</button>
+        </div>
+        <p class="hint">It goes in where the cursor is in your text, and is drawn in the page's own pen and ink.</p>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

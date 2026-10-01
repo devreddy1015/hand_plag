@@ -1,0 +1,542 @@
+import { describe, expect, it } from 'vitest';
+import {
+  DEFAULT_SETTINGS,
+  applyTemplate,
+  layoutDocument,
+  pageGeometry,
+  type ImageInfo,
+  type LayoutOptions,
+  type PageGeometry,
+  type Settings,
+  type Sketch,
+} from '../src/engine';
+
+/** Monospace-ish fake font: letters 10u wide, spaces 5u. */
+const measure = (text: string) => {
+  let w = 0;
+  for (const ch of text) w += ch === ' ' ? 5 : 10;
+  return w;
+};
+
+const FONT_PX = 20;
+
+function settings(overrides: Partial<Settings> = {}): Settings {
+  return { ...structuredClone(DEFAULT_SETTINGS), ...overrides };
+}
+
+/** Lay out with the human touches off, so assertions can be exact. */
+function layout(text: string, overrides: Partial<Settings> = {}, options: LayoutOptions = {}) {
+  const s = settings({ text, corrections: 0, lineFill: 0, markdown: false, ...overrides });
+  return layoutDocument(text, (i) => pageGeometry(s, i), FONT_PX, s, measure, options);
+}
+
+/** A picture of a given shape, as the image registry would report it. */
+const picture = (width = 400, height = 300): LayoutOptions => ({ imageSize: () => ({ width, height }) });
+
+const area = (geom: PageGeometry) => geom.areas[0];
+
+const lorem = (words: number) =>
+  Array.from({ length: words }, (_, i) => ['alpha', 'beta', 'gamma', 'delta', 'epsilon'][i % 5]).join(' ');
+
+const drawn = (doc: { pages: { glyphs: { text: string }[] }[] }) =>
+  doc.pages.flatMap((p) => p.glyphs.map((g) => g.text)).join('');
+
+describe('layoutDocument', () => {
+  it('is deterministic for the same seed', () => {
+    expect(layout(lorem(200)).pages).toEqual(layout(lorem(200)).pages);
+  });
+
+  it('changes with the seed', () => {
+    const a = layout(lorem(50), { seed: 1 });
+    const b = layout(lorem(50), { seed: 2 });
+    expect(a.pages[0].glyphs[5]).not.toEqual(b.pages[0].glyphs[5]);
+  });
+
+  it('keeps every letter, in order', () => {
+    const text = 'The quick brown fox\njumps over\n\nthe lazy dog.';
+    expect(drawn(layout(text))).toBe(text.replace(/\s/g, ''));
+  });
+
+  it('wraps inside the text area', () => {
+    const doc = layout(lorem(600));
+    const { left, right } = area(doc.geometry);
+    for (const page of doc.pages) {
+      for (const g of page.glyphs) {
+        expect(g.x).toBeGreaterThanOrEqual(left - 0.001);
+        expect(g.x + 10 * g.scaleX).toBeLessThanOrEqual(right + 0.001);
+      }
+    }
+  });
+
+  it('flows onto more pages and keeps glyphs on the page', () => {
+    const doc = layout(lorem(3000));
+    expect(doc.pages.length).toBeGreaterThan(1);
+    doc.pages.forEach((page, i) => {
+      expect(page.index).toBe(i);
+      expect(page.glyphs.length).toBeGreaterThan(0);
+      for (const g of page.glyphs) {
+        expect(g.y).toBeGreaterThan(0);
+        expect(g.y).toBeLessThan(doc.geometry.height);
+      }
+    });
+  });
+
+  it('writes on the ruled lines and stays flat when messiness is zero', () => {
+    const doc = layout('hello world\nsecond line', { messiness: 0, slant: 0 });
+    const lines = area(doc.geometry).lines;
+    const ys = [...new Set(doc.pages[0].glyphs.map((g) => g.y.toFixed(3)))].map(Number);
+    expect(ys).toHaveLength(2);
+    expect(ys[0]).toBeLessThan(lines[0]);
+    expect(lines[0] - ys[0]).toBeLessThan(doc.geometry.spacing * 0.2);
+    for (const g of doc.pages[0].glyphs) {
+      expect(g.rotation).toBeCloseTo(0, 12);
+      expect(g.skew).toBeCloseTo(0, 12);
+      expect(g.scaleX).toBeCloseTo(1, 12);
+      expect(g.scaleY).toBeCloseTo(1, 12);
+    }
+  });
+
+  it('starts a new page at [[page]]', () => {
+    const doc = layout('first\n[[page]]\nsecond');
+    expect(doc.pages).toHaveLength(2);
+    expect(doc.pages[0].glyphs.map((g) => g.text).join('')).toBe('first');
+    expect(doc.pages[1].glyphs.map((g) => g.text).join('')).toBe('second');
+  });
+
+  it('keeps blank lines', () => {
+    const doc = layout('a\n\n\nb', { messiness: 0 });
+    const [a, b] = doc.pages[0].glyphs;
+    expect(b.y - a.y).toBeCloseTo(doc.geometry.spacing * 3, 1);
+  });
+
+  it('splits a word longer than a line', () => {
+    const doc = layout('x'.repeat(400));
+    const ys = new Set(doc.pages[0].glyphs.map((g) => Math.round(g.y / doc.geometry.spacing)));
+    expect(ys.size).toBeGreaterThan(1);
+    for (const g of doc.pages[0].glyphs) expect(g.x).toBeLessThanOrEqual(area(doc.geometry).right);
+  });
+
+  it('wraps Chinese text without spaces', () => {
+    const doc = layout('字'.repeat(300));
+    const lines = new Set(doc.pages[0].glyphs.map((g) => Math.round(g.y / doc.geometry.spacing)));
+    expect(lines.size).toBeGreaterThan(1);
+  });
+
+  it('lays right-to-left paragraphs from the right margin', () => {
+    const doc = layout('שלום עולם', { messiness: 0 });
+    const [first, second] = doc.pages[0].glyphs;
+    expect(first.text).toBe('שלום');
+    expect(first.x).toBeGreaterThan(second.x);
+    expect(first.x + 40).toBeCloseTo(area(doc.geometry).right, 5);
+  });
+
+  it('does not reshuffle earlier paragraphs when a later one is edited', () => {
+    const a = layout('Paragraph one stays put.\nSecond paragraph.');
+    const b = layout('Paragraph one stays put.\nSecond paragraph, edited.');
+    const firstLine = (d: typeof a) => d.pages[0].glyphs.slice(0, 21);
+    expect(firstLine(a)).toEqual(firstLine(b));
+  });
+
+  it('always returns at least one page', () => {
+    expect(layout('').pages).toHaveLength(1);
+  });
+});
+
+describe('structure', () => {
+  it('writes headings larger and underlines them', () => {
+    const doc = layout('# Title\nbody text', { markdown: true, messiness: 0 });
+    const title = doc.pages[0].glyphs.filter((g) => 'Title'.includes(g.text));
+    const body = doc.pages[0].glyphs.find((g) => g.text === 'b')!;
+    expect(title[0].scaleY).toBeGreaterThan(body.scaleY * 1.3);
+    expect(doc.pages[0].strokes.length).toBeGreaterThan(0);
+  });
+
+  it('gives a big heading two rule slots and a line of air above', () => {
+    const doc = layout('intro\n# Title\nbody', { markdown: true, messiness: 0 });
+    const spacing = doc.geometry.spacing;
+    const ys = [...new Set(doc.pages[0].glyphs.map((g) => Math.round(g.y / spacing)))];
+    // intro, (blank), heading on the second of its two slots, body.
+    expect(ys[1] - ys[0]).toBe(3);
+  });
+
+  it('marks a bullet list with a drawn dab and a hanging indent', () => {
+    const doc = layout('- first item\n- second item', { markdown: true, messiness: 0 });
+    expect(doc.pages[0].strokes.filter((s) => s.points.length === 1)).toHaveLength(2);
+    const left = Math.min(...doc.pages[0].glyphs.map((g) => g.x));
+    expect(left).toBeGreaterThan(area(doc.geometry).left);
+  });
+
+  it('keeps the author’s own list numbers', () => {
+    const doc = layout('3. third\n4. fourth', { markdown: true });
+    expect(drawn(doc)).toBe('3.third4.fourth');
+  });
+
+  it('presses harder on bold and leans further on italic', () => {
+    const doc = layout('plain **bold** _slanted_', { markdown: true, messiness: 0 });
+    const glyphs = doc.pages[0].glyphs;
+    const plain = glyphs.find((g) => g.text === 'p')!;
+    const bold = glyphs.find((g) => g.text === 'b')!;
+    const italic = glyphs.find((g) => g.text === 's')!;
+    expect(bold.pressure).toBeGreaterThan(plain.pressure);
+    expect(bold.scaleY).toBeGreaterThan(plain.scaleY);
+    expect(Math.abs(italic.skew)).toBeGreaterThan(Math.abs(plain.skew) + 0.1);
+    expect(drawn(doc)).toBe('plainboldslanted');
+  });
+
+  it('rules off a divider without writing any letters', () => {
+    const doc = layout('above\n---\nbelow', { markdown: true });
+    expect(drawn(doc)).toBe('abovebelow');
+    expect(doc.pages[0].strokes.length).toBe(1);
+  });
+
+  it('ignores markup when markdown reading is off', () => {
+    const doc = layout('# not a heading', { markdown: false });
+    expect(drawn(doc)).toBe('#notaheading');
+  });
+});
+
+describe('diagrams', () => {
+  const page = (doc: ReturnType<typeof layout>, i = 0) => doc.pages[i];
+
+  it('leaves a gap of the right shape and writes on underneath', () => {
+    const doc = layout('Before the figure.\n![](fig-1)\nAfter the figure.', { markdown: true }, picture(400, 300));
+    const images = page(doc).images;
+    expect(images).toHaveLength(1);
+    const column = area(doc.geometry).right - area(doc.geometry).left;
+    expect(images[0].width).toBeCloseTo(column * DEFAULT_SETTINGS.diagramScale, 5);
+    expect(images[0].height / images[0].width).toBeCloseTo(300 / 400, 5);
+    // The text after it is written below the picture, not over it.
+    const after = page(doc).glyphs.filter((g) => g.y > images[0].y);
+    expect(after.length).toBeGreaterThan(0);
+    for (const g of after) expect(g.y).toBeGreaterThan(images[0].y + images[0].height - doc.geometry.spacing);
+  });
+
+  it('keeps a figure whole by carrying it to the next page', () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `Line number ${i + 1} of the page.`).join('\n');
+    const doc = layout(`${filler}\n![](fig-1)`, { markdown: true }, picture(400, 600));
+    expect(doc.pages.length).toBeGreaterThan(1);
+    expect(doc.pages[0].images).toHaveLength(0);
+    expect(doc.pages[1].images).toHaveLength(1);
+    const image = doc.pages[1].images[0];
+    expect(image.y).toBeGreaterThan(0);
+    expect(image.y + image.height).toBeLessThanOrEqual(doc.geometry.height);
+  });
+
+  it('writes on when a figure will not fit, and draws it at the top of the next page', () => {
+    const before = Array.from({ length: 22 }, (_, i) => `Line ${i + 1} before.`).join('\n');
+    const after = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} after.`).join('\n');
+    const doc = layout(`${before}\n![Figure 1](fig-1)\n${after}`, { markdown: true }, picture(400, 600));
+    // The page is filled with the text that came after the figure...
+    const firstPage = doc.pages[0].glyphs.map((g) => g.text).join('');
+    expect(firstPage).toContain('Line1after.');
+    // ...and the figure opens the next page, with its caption under it.
+    expect(doc.pages[0].images).toHaveLength(0);
+    const image = doc.pages[1].images[0];
+    expect(image).toBeDefined();
+    expect(image.y).toBeLessThan(doc.geometry.height * 0.25);
+    const caption = doc.pages[1].glyphs.filter((g) => g.y > image.y + image.height);
+    expect(caption.map((g) => g.text).join('')).toContain('Figure1');
+  });
+
+  it('writes the caption under the figure, smaller and centred', () => {
+    const doc = layout('![Figure 1. The cycle](fig-1)', { markdown: true, messiness: 0 }, picture());
+    const image = page(doc).images[0];
+    const caption = page(doc).glyphs;
+    expect(caption.map((g) => g.text).join('')).toBe('Figure1.Thecycle');
+    for (const g of caption) expect(g.y).toBeGreaterThan(image.y + image.height);
+    // Smaller than the body hand, and set in from the column edge on both sides.
+    expect(caption[0].scaleY).toBeLessThan(1);
+    const left = Math.min(...caption.map((g) => g.x));
+    const right = Math.max(...caption.map((g) => g.x));
+    const centre = (area(doc.geometry).left + area(doc.geometry).right) / 2;
+    expect(Math.abs((left + right) / 2 - centre)).toBeLessThan(doc.geometry.spacing * 2);
+  });
+
+  it('rules an empty box when the picture is not to hand', () => {
+    const doc = layout('![](missing)', { markdown: true });
+    expect(page(doc).images).toHaveLength(1);
+    // Four strokes: one per side of the box.
+    expect(page(doc).strokes).toHaveLength(4);
+  });
+
+  it('rules a box round a figure when asked, and not otherwise', () => {
+    const framed = layout('![](fig-1)', { markdown: true, diagramFrame: true }, picture());
+    expect(framed.pages[0].strokes).toHaveLength(4);
+    const plain = layout('![](fig-1)', { markdown: true, diagramFrame: false }, picture());
+    expect(plain.pages[0].strokes).toHaveLength(0);
+  });
+
+  it('leaves diagrams out altogether when they are turned off', () => {
+    const doc = layout('![Figure 1. The cycle](fig-1)\nText.', { markdown: true, diagrams: false }, picture());
+    expect(doc.pages[0].images).toHaveLength(0);
+    expect(drawn(doc)).toBe('Text.');
+  });
+
+  it('follows the width asked for', () => {
+    const wide = layout('![](fig-1)', { markdown: true, diagramScale: 1 }, picture());
+    const narrow = layout('![](fig-1)', { markdown: true, diagramScale: 0.4 }, picture());
+    expect(narrow.pages[0].images[0].width).toBeCloseTo(wide.pages[0].images[0].width * 0.4, 5);
+  });
+});
+
+describe('filling the line', () => {
+  it('fits more words per line when the writer crams', () => {
+    const text = lorem(400);
+    const loose = layout(text, { lineFill: 0 });
+    const tight = layout(text, { lineFill: 1 });
+    const lines = (d: typeof loose) => new Set(d.pages.flatMap((p) => p.glyphs.map((g) => `${p.index}:${g.y.toFixed(1)}`))).size;
+    expect(lines(tight)).toBeLessThanOrEqual(lines(loose));
+  });
+
+  it('hyphenates a long word rather than leave a hole', () => {
+    const text = Array.from({ length: 40 }, () => 'extraordinarily complicated').join(' ');
+    const doc = layout(text, { lineFill: 1 });
+    const letters = drawn(doc);
+    expect(letters).toContain('-');
+    expect(letters.replace(/-/g, '')).toBe(text.replace(/\s/g, ''));
+  });
+});
+
+describe('human corrections', () => {
+  it('adds none at all when turned off', () => {
+    const doc = layout(lorem(500), { corrections: 0 });
+    expect(doc.pages.flatMap((p) => p.strokes)).toHaveLength(0);
+  });
+
+  it('crosses out a false start and writes the word again', () => {
+    const doc = layout(lorem(500), { corrections: 1 });
+    const strokes = doc.pages.flatMap((p) => p.strokes);
+    expect(strokes.length).toBeGreaterThan(0);
+    // Every word still appears in full, in order, whatever was crossed out.
+    const words = drawn(doc);
+    expect(words).toContain('alphabetagammadeltaepsilon');
+  });
+});
+
+describe('page furniture', () => {
+  it('fills the first column before the second', () => {
+    const s = settings({ text: lorem(400), corrections: 0, lineFill: 0 });
+    s.features = { ...s.features, columns: 2, columnDivider: true };
+    const doc = layoutDocument(s.text, (i) => pageGeometry(s, i), FONT_PX, s, measure);
+    const geom = doc.geometry;
+    expect(geom.areas).toHaveLength(2);
+    const first = doc.pages[0].glyphs[0];
+    expect(first.x).toBeLessThan(geom.areas[0].right);
+    const last = doc.pages[0].glyphs[doc.pages[0].glyphs.length - 1];
+    expect(last.x).toBeGreaterThanOrEqual(geom.areas[1].left - 1);
+  });
+
+  it('mirrors the binding on alternate pages', () => {
+    const s = settings({ text: lorem(1200), corrections: 0 });
+    s.features = { ...s.features, mirrorEvenPages: true };
+    s.margins = { ...s.margins, left: 30, right: 10 };
+    const doc = layoutDocument(s.text, (i) => pageGeometry(s, i), FONT_PX, s, measure);
+    expect(doc.pages.length).toBeGreaterThan(1);
+    expect(doc.geometryOf(0).areas[0].left).toBeGreaterThan(doc.geometryOf(1).areas[0].left);
+    expect(doc.geometryOf(0).bindingSide).toBe('left');
+    expect(doc.geometryOf(1).bindingSide).toBe('right');
+  });
+
+  it('writes the page number by hand above the text', () => {
+    const s = settings({ text: lorem(1200), corrections: 0 });
+    s.features = { ...s.features, pageNumber: 'handwritten' };
+    const doc = layoutDocument(s.text, (i) => pageGeometry(s, i), FONT_PX, s, measure);
+    const second = doc.pages[1];
+    const number = second.glyphs[second.glyphs.length - 1];
+    expect(number.text).toBe('2');
+    expect(number.y).toBeLessThan(doc.geometryOf(1).areas[0].lines[0]);
+  });
+});
+
+describe('pageGeometry', () => {
+  it('uses physical paper sizes and swaps for landscape', () => {
+    const portrait = pageGeometry(settings({ paperSize: 'letter' }));
+    expect(portrait.widthMm).toBeCloseTo(215.9);
+    expect(portrait.width).toBeCloseTo(816, 0);
+    const landscape = pageGeometry(settings({ paperSize: 'letter', landscape: true }));
+    expect(landscape.width).toBeCloseTo(portrait.height);
+  });
+
+  it('keeps at least one text line even with huge margins', () => {
+    const g = pageGeometry(settings({ margins: { top: 200, bottom: 200, left: 10, right: 10 } }));
+    expect(g.areas[0].lines.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('every template gives a usable page', () => {
+    for (const id of ['notebook', 'cornell', 'exam', 'seyes', 'four-line', 'graph', 'index-card', 'register', 'spiral']) {
+      const s = applyTemplate(settings(), id);
+      const g = pageGeometry(s, 1);
+      expect(g.areas.length, id).toBeGreaterThanOrEqual(1);
+      for (const a of g.areas) {
+        expect(a.lines.length, id).toBeGreaterThan(0);
+        expect(a.right - a.left, id).toBeGreaterThan(20);
+        expect(a.left, id).toBeGreaterThanOrEqual(0);
+        expect(a.right, id).toBeLessThanOrEqual(g.width);
+        for (const y of a.lines) expect(y, id).toBeLessThanOrEqual(g.height);
+      }
+    }
+  });
+
+  it('cuts a cue column and a summary box out of the writing area', () => {
+    const plain = pageGeometry(settings());
+    const cornell = pageGeometry(applyTemplate(settings(), 'cornell'));
+    expect(cornell.areas[0].left).toBeGreaterThan(plain.areas[0].left);
+    expect(cornell.summaryY).not.toBeNull();
+    expect(cornell.areas[0].lines[cornell.areas[0].lines.length - 1]).toBeLessThan(cornell.summaryY!);
+  });
+
+  it('draws practice rulings', () => {
+    expect(pageGeometry(applyTemplate(settings(), 'four-line')).midRules.length).toBeGreaterThan(5);
+    const seyes = pageGeometry(applyTemplate(settings(), 'seyes'));
+    expect(seyes.verticalRules.length).toBeGreaterThan(5);
+    expect(seyes.midRules.length).toBeGreaterThan(seyes.rules.length);
+  });
+
+  it('punches the right number of holes on the binding side', () => {
+    const three = pageGeometry(applyTemplate(settings(), 'college'));
+    expect(three.holes).toHaveLength(3);
+    for (const hole of three.holes) expect(hole.x).toBeLessThan(three.width / 2);
+    const spiral = pageGeometry(applyTemplate(settings(), 'spiral'), 1);
+    expect(spiral.holes.length).toBeGreaterThan(10);
+    for (const hole of spiral.holes) expect(hole.x).toBeGreaterThan(spiral.width / 2);
+  });
+});
+
+describe('connected fonts', () => {
+  it('damp per-letter jitter but keep line drift', () => {
+    const s = settings({ text: lorem(40), corrections: 0 });
+    const geometryOf = (i: number) => pageGeometry(s, i);
+    const loose = layoutDocument(s.text, geometryOf, FONT_PX, s, measure);
+    const joined = layoutDocument(s.text, geometryOf, FONT_PX, s, measure, { connected: true });
+    const spread = (d: typeof loose) => {
+      const g = d.pages[0].glyphs;
+      let sum = 0;
+      for (let i = 1; i < g.length; i++) sum += Math.abs(g[i].rotation - g[i - 1].rotation);
+      return sum / g.length;
+    };
+    expect(spread(joined)).toBeLessThan(spread(loose) * 0.6);
+  });
+});
+
+describe('diagrams copied out by hand', () => {
+  const sketch: Sketch = {
+    aspect: 2,
+    paths: [
+      { pts: [0.1, 0.1, 0.9, 0.1, 0.9, 0.4, 0.1, 0.4], weight: 1, closed: true },
+      { pts: [0.5, 0.45], weight: 1 },
+    ],
+    fills: [
+      { pts: [0.2, 0.2, 0.4, 0.2, 0.4, 0.38, 0.2, 0.38], area: 0.036, tone: 0.7, group: 0 },
+      { pts: [0.6, 0.2, 0.8, 0.2, 0.8, 0.38, 0.6, 0.38], area: 0.036, tone: 0.3, group: 1 },
+    ],
+    labels: [{ text: 'Glucose', x: 0.4, y: 0.3, w: 0.2, size: 0.04 }],
+    lineWidth: 0.004,
+  };
+  const traced = (info: Partial<ImageInfo> = {}): LayoutOptions => ({ imageSize: () => ({ width: 400, height: 200, sketch, ...info }) });
+
+  it('draws the lines with the pen and writes the labels in the hand', () => {
+    const doc = layout('![](fig-1)', { markdown: true }, traced());
+    const page0 = doc.pages[0];
+    // Nothing is pasted: the whole figure is ink.
+    expect(page0.images).toHaveLength(0);
+    expect(page0.strokes.length).toBeGreaterThan(6);
+    expect(page0.glyphs.map((g) => g.text).join('')).toBe('Glucose');
+    // Every letter of the label is a letter of the hand: bent, and seeded.
+    for (const g of page0.glyphs) {
+      expect(g.seed).toBeDefined();
+      expect(g.warp).toBeGreaterThan(0);
+    }
+  });
+
+  it('shades each colour of fill its own way', () => {
+    const doc = layout('![](fig-1)', { markdown: true }, traced());
+    const hatchAngles = new Set(
+      doc.pages[0].strokes
+        .filter((st) => st.points.length === 3)
+        .map((st) => Math.round((Math.atan2(st.points[2].y - st.points[0].y, st.points[2].x - st.points[0].x) * 180) / Math.PI / 30)),
+    );
+    expect(hatchAngles.size).toBeGreaterThan(1);
+  });
+
+  it('writes the labels of an equation at the size of the hand', () => {
+    const doc = layout('![](eq-1)', { markdown: true }, traced({ kind: 'math', widthUnits: 300 }));
+    for (const g of doc.pages[0].glyphs) expect(g.scaleY).toBeGreaterThan(0.3);
+  });
+
+  it('sticks a photograph on as it is', () => {
+    const doc = layout('![](photo-1)', { markdown: true }, traced({ kind: 'photo' }));
+    expect(doc.pages[0].images).toHaveLength(1);
+    expect(doc.pages[0].images[0].photo).toBe(true);
+    expect(doc.pages[0].glyphs).toHaveLength(0);
+  });
+
+  it('pastes the picture instead when diagrams are to be stuck on', () => {
+    const doc = layout('![](fig-1)', { markdown: true, diagramStyle: 'pasted' }, traced());
+    expect(doc.pages[0].images).toHaveLength(1);
+    expect(doc.pages[0].glyphs).toHaveLength(0);
+  });
+});
+
+describe('what gets written', () => {
+  it('never runs two words together', () => {
+    const text = lorem(400);
+    const doc = layout(text, { messiness: 1, jitter: { ...DEFAULT_SETTINGS.jitter, spacing: 2 } });
+    const words = text.split(' ');
+    const glyphs = doc.pages.flatMap((p) => p.glyphs);
+    let at = 0;
+    let checked = 0;
+    for (let w = 0; w + 1 < words.length; w++) {
+      const last = glyphs[at + words[w].length - 1];
+      const next = glyphs[at + words[w].length];
+      at += words[w].length;
+      // Only pairs on the same line: a word that starts the next line has no gap to measure.
+      if (!next || Math.abs(next.y - last.y) > 8 || next.x < last.x) continue;
+      // Letters are 10 wide and a space is 5 in the test font.
+      expect(next.x - (last.x + 10 * last.scaleX)).toBeGreaterThan(5 * 0.6);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(200);
+  });
+
+  it('bends every letter, and gives each copy its own seed', () => {
+    const doc = layout('eeeeeeeeee');
+    const seeds = new Set(doc.pages[0].glyphs.map((g) => g.seed));
+    expect(seeds.size).toBe(10);
+    for (const g of doc.pages[0].glyphs) expect(g.warp).toBeGreaterThan(0);
+  });
+
+  it('does not bend letters at messiness zero', () => {
+    const doc = layout('eeee', { messiness: 0 });
+    for (const g of doc.pages[0].glyphs) expect(g.warp).toBe(0);
+  });
+
+  it('writes a stand-in for a character the hand has no letter for', () => {
+    const doc = layout('say “hi”…', {}, { substitute: (u) => ({ '“': '"', '”': '"', '…': '...' })[u] ?? u });
+    expect(drawn(doc)).toBe('say"hi"...');
+  });
+
+  it('heads every sheet with the name and ID', () => {
+    const doc = layout(lorem(2000), { writerName: 'Asha', writerId: '42' });
+    expect(doc.pages.length).toBeGreaterThan(2);
+    for (const page of doc.pages) {
+      const text = page.glyphs.map((g) => g.text).join('');
+      expect(text).toContain('Asha');
+      expect(text).toContain('ID:42');
+    }
+  });
+
+  it('heads only the first sheet when asked to', () => {
+    const doc = layout(lorem(2000), { writerName: 'Asha', writerId: '42', writerEveryPage: false });
+    expect(doc.pages[0].glyphs.map((g) => g.text).join('')).toContain('Asha');
+    expect(doc.pages[1].glyphs.map((g) => g.text).join('')).not.toContain('Asha');
+  });
+
+  it('raises superscripts and drops subscripts, smaller', () => {
+    const doc = layout('x^2 H_2', { markdown: true, messiness: 0 });
+    const [x, two, h, sub] = doc.pages[0].glyphs;
+    expect(two.y).toBeLessThan(x.y - FONT_PX * 0.2);
+    expect(two.scaleY).toBeLessThan(x.scaleY);
+    expect(sub.y).toBeGreaterThan(h.y);
+    expect(sub.scaleY).toBeLessThan(h.scaleY);
+  });
+});
