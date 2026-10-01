@@ -1,4 +1,4 @@
-import { clamp, hashInts, mulberry32 } from './random';
+import { clamp, createTileNoise, hashInts, mulberry32 } from './random';
 import type { PageGeometry, PaperSize, Settings, TextArea } from './types';
 
 /** Layout units per millimetre (CSS px at 96 DPI). */
@@ -194,6 +194,51 @@ export function get2d(canvas: AnyCanvas): Ctx2D {
   const ctx = (canvas as HTMLCanvasElement).getContext('2d') as Ctx2D | null;
   if (!ctx) throw new Error('2D canvas is not available');
   return ctx;
+}
+
+const scratchPool = new Map<string, AnyCanvas>();
+
+/**
+ * A cleared working canvas of a given size, kept between pages so a long
+ * document does not allocate one per page. `key` keeps apart the canvases
+ * one page needs at the same time.
+ */
+export function scratchCanvas(w: number, h: number, key: string, createCanvas: CanvasFactory): AnyCanvas {
+  const id = `${key}:${w}x${h}`;
+  let canvas = scratchPool.get(id);
+  if (!canvas) {
+    if (scratchPool.size > 8) scratchPool.clear();
+    canvas = createCanvas(w, h);
+    scratchPool.set(id, canvas);
+  }
+  const ctx = get2d(canvas);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, w, h);
+  return canvas;
+}
+
+export function releaseScratch(): void {
+  scratchPool.clear();
+}
+
+let blurSupport: boolean | undefined;
+
+/** Whether this canvas can blur as it draws (`ctx.filter`); not every one can. */
+export function canBlur(ctx: Ctx2D): boolean {
+  if (blurSupport === undefined) {
+    const c = ctx as CanvasRenderingContext2D;
+    if (typeof c.filter !== 'string') blurSupport = false;
+    else {
+      const before = c.filter;
+      c.filter = 'blur(1px)';
+      blurSupport = c.filter === 'blur(1px)';
+      c.filter = before;
+    }
+  }
+  return blurSupport;
 }
 
 /** Paints the sheet: colour, grain, rules, margins, holes and printed labels. */
@@ -511,24 +556,11 @@ function grainTile(seed: number, size: number, scale: number, createCanvas: Canv
   const rng = mulberry32(hashInts(seed, 0x9a9e));
 
   const cells = Math.max(3, Math.round(size / (22 * scale)));
-  const cellSize = size / cells;
-  const lattice = new Float32Array(cells * cells);
-  for (let i = 0; i < lattice.length; i++) lattice[i] = rng();
-  const smooth = (t: number) => t * t * (3 - 2 * t);
+  const blotches = createTileNoise(rng, cells);
 
   for (let y = 0; y < size; y++) {
-    const gy = y / cellSize;
-    const y0 = Math.floor(gy) % cells;
-    const y1 = (y0 + 1) % cells;
-    const ty = smooth(gy - Math.floor(gy));
     for (let x = 0; x < size; x++) {
-      const gx = x / cellSize;
-      const x0 = Math.floor(gx) % cells;
-      const x1 = (x0 + 1) % cells;
-      const tx = smooth(gx - Math.floor(gx));
-      const a = lattice[y0 * cells + x0] + (lattice[y0 * cells + x1] - lattice[y0 * cells + x0]) * tx;
-      const b = lattice[y1 * cells + x0] + (lattice[y1 * cells + x1] - lattice[y1 * cells + x0]) * tx;
-      const blotch = a + (b - a) * ty;
+      const blotch = blotches((x * cells) / size, (y * cells) / size);
       const speck = rng();
       let v = 255 - blotch * 3 - speck * speck * 5;
       if (speck > 0.9985) v -= 18; // rare darker fleck

@@ -1,9 +1,10 @@
-import { applyFinish, releaseFinishes } from './finish';
-import { drawPaper, get2d, MM, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
+import { impress, otherSide, releaseDepth } from './depth';
+import { applyFinish } from './finish';
+import { canBlur, drawPaper, get2d, MM, releaseScratch, scratchCanvas, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
 import { penFor, smoothSamples, tracePenStroke, type PenStyle } from './pen';
-import { clamp, hashInts, mulberry32 } from './random';
+import { clamp, createTileNoise, hashInts, mulberry32, smoothstep } from './random';
 import { createWarp, forEachPoint, traceOutline, warpStroke, type GlyphShapes, type Outline, type StrokeGlyph } from './shapes';
-import type { DocumentLayout, InkStroke, PlacedGlyph, PlacedImage, Settings } from './types';
+import type { DocumentLayout, InkStroke, PageLayout, PlacedGlyph, PlacedImage, Settings } from './types';
 
 /**
  * Copies of a glyph laid side by side to make up the width of a nib. The
@@ -28,29 +29,14 @@ export interface RenderOptions {
   shapes?: GlyphShapes;
 }
 
-const layerPool = new Map<string, AnyCanvas>();
-
-function layer(w: number, h: number, key: string, createCanvas: CanvasFactory): AnyCanvas {
-  const id = `${key}:${w}x${h}`;
-  let canvas = layerPool.get(id);
-  if (!canvas) {
-    if (layerPool.size > 4) layerPool.clear();
-    canvas = createCanvas(w, h);
-    layerPool.set(id, canvas);
-  }
-  const ctx = get2d(canvas);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.filter = 'none';
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.clearRect(0, 0, w, h);
-  return canvas;
-}
-
 /** Release the cached layers. Worth calling after a high-resolution export. */
 export function releaseLayers(): void {
-  layerPool.clear();
-  releaseFinishes();
+  releaseScratch();
+  releaseDepth();
+}
+
+function hasInk(page: PageLayout | undefined): page is PageLayout {
+  return page !== undefined && (page.glyphs.length > 0 || page.strokes.length > 0 || page.images.length > 0);
 }
 
 /** Draw one page (paper + handwriting + optional finish) onto `target`. */
@@ -79,37 +65,32 @@ export function renderPage(
     if (stuck.length > 0) drawPastedImages(ctx, stuck, opts);
   }
 
-  // Ink from the other side of the sheet, showing faintly through the paper.
-  const back = s.features.showThrough ? doc.pages[pageIndex + 1] : undefined;
-  if (back && (back.glyphs.length > 0 || back.strokes.length > 0 || back.images.length > 0)) {
-    const bleedCanvas = layer(w, h, 'back', createCanvas);
-    const bleed = get2d(bleedCanvas);
-    drawInk(bleed, doc, pageIndex + 1, s, opts, true);
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalAlpha = 0.07;
-    if (supportsFilter(ctx)) ctx.filter = `blur(${Math.max(0.4, 0.12 * MM * scale).toFixed(2)}px)`;
-    // The back of the sheet is a mirror image.
-    ctx.translate(w, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(bleedCanvas as CanvasImageSource, 0, 0);
-    ctx.filter = 'none';
-    ctx.restore();
+  const pen = penFor(s.pen);
+  let inkCanvas: AnyCanvas | null = null;
+  if (hasInk(doc.pages[pageIndex])) {
+    inkCanvas = scratchCanvas(w, h, 'ink', createCanvas);
+    drawInk(get2d(inkCanvas), doc, pageIndex, s, opts, false);
   }
 
-  const page = doc.pages[pageIndex];
-  if (page && (page.glyphs.length > 0 || page.strokes.length > 0 || page.images.length > 0)) {
-    const inkCanvas = layer(w, h, 'ink', createCanvas);
-    const ink = get2d(inkCanvas);
-    drawInk(ink, doc, pageIndex, s, opts, false);
+  const backIndex = otherSide(pageIndex);
+  let backCanvas: AnyCanvas | null = null;
+  if (s.features.showThrough && hasInk(doc.pages[backIndex])) {
+    backCanvas = scratchCanvas(w, h, 'back', createCanvas);
+    drawInk(get2d(backCanvas), doc, backIndex, s, opts, true);
+  }
 
-    const pen = penFor(s.pen);
+  // The pen's grooves in the paper, and the other side showing through.
+  const grooves = s.texture ? inkCanvas : null;
+  if (grooves || backCanvas) {
+    impress({ paper: ctx, width: w, height: h, front: grooves, back: backCanvas, pen, ink: parseHex(s.inkColor), scale, seed: s.seed, pageIndex, createCanvas });
+  }
+
+  if (inkCanvas) {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'multiply';
     const bleedPx = pen.bleed * MM * scale;
-    if (bleedPx >= 0.3 && supportsFilter(ctx)) {
+    if (bleedPx >= 0.3 && canBlur(ctx)) {
       ctx.filter = `blur(${bleedPx.toFixed(2)}px)`;
       ctx.globalAlpha = pen.bleedAlpha;
       ctx.drawImage(inkCanvas as CanvasImageSource, 0, 0);
@@ -499,7 +480,7 @@ function drawPastedImages(ctx: Ctx2D, images: PlacedImage[], opts: RenderOptions
     if (!source) continue;
     placeImage(ctx, image, opts.scale, (w, h) => {
       ctx.globalAlpha = 0.28;
-      if (supportsFilter(ctx)) ctx.filter = `blur(${Math.max(1, 0.5 * MM * opts.scale).toFixed(1)}px)`;
+      if (canBlur(ctx)) ctx.filter = `blur(${Math.max(1, 0.5 * MM * opts.scale).toFixed(1)}px)`;
       ctx.fillStyle = 'rgba(40,36,30,0.9)';
       ctx.fillRect(2, 3, w, h);
       ctx.filter = 'none';
@@ -596,22 +577,6 @@ export function parseHex(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-let filterSupport: boolean | undefined;
-function supportsFilter(ctx: Ctx2D): boolean {
-  if (filterSupport === undefined) {
-    const c = ctx as CanvasRenderingContext2D;
-    if (typeof c.filter !== 'string') {
-      filterSupport = false;
-    } else {
-      const before = c.filter;
-      c.filter = 'blur(1px)';
-      filterSupport = c.filter === 'blur(1px)';
-      c.filter = before;
-    }
-  }
-  return filterSupport;
-}
-
 const noiseCache = new Map<string, AnyCanvas>();
 
 /** Tile of black specks whose alpha averages `density`. */
@@ -651,40 +616,20 @@ function densityTile(seed: number, scale: number, strength: number, createCanvas
   const ctx = get2d(canvas);
   const img = ctx.createImageData(size, size);
   const rng = mulberry32(hashInts(seed, 0xd3a5));
-  const octave = (cells: number) => {
-    const lattice = new Float32Array(cells * cells);
-    for (let i = 0; i < lattice.length; i++) lattice[i] = rng();
-    const cell = size / cells;
-    return (x: number, y: number) => {
-      const gx = x / cell;
-      const gy = y / cell;
-      const x0 = Math.floor(gx) % cells;
-      const y0 = Math.floor(gy) % cells;
-      const x1 = (x0 + 1) % cells;
-      const y1 = (y0 + 1) % cells;
-      const tx = smooth(gx - Math.floor(gx));
-      const ty = smooth(gy - Math.floor(gy));
-      const a = lattice[y0 * cells + x0] + (lattice[y0 * cells + x1] - lattice[y0 * cells + x0]) * tx;
-      const b = lattice[y1 * cells + x0] + (lattice[y1 * cells + x1] - lattice[y1 * cells + x0]) * tx;
-      return a + (b - a) * ty;
-    };
-  };
-  // Patches about 2 mm across, and a mottle about a third of a millimetre.
-  const coarse = octave(Math.max(4, Math.round(30 / 2)));
-  const fine = octave(Math.max(8, Math.round(30 / 0.35)));
+  // Over the 30 mm tile: patches about 2 mm across, and a mottle about a third of a millimetre.
+  const coarseCells = 30 / 2;
+  const fineCells = Math.round(30 / 0.35);
+  const coarse = createTileNoise(rng, coarseCells);
+  const fine = createTileNoise(rng, fineCells);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const patch = coarse(x, y);
-      const mottle = fine(x, y);
-      const take = smooth(clamp((patch - 0.45) / 0.5, 0, 1)) * 0.85 + mottle * mottle * 0.2;
+      const patch = coarse((x * coarseCells) / size, (y * coarseCells) / size);
+      const mottle = fine((x * fineCells) / size, (y * fineCells) / size);
+      const take = smoothstep((patch - 0.45) / 0.5) * 0.85 + mottle * mottle * 0.2;
       img.data[(y * size + x) * 4 + 3] = Math.round(clamp(take * strength, 0, 1) * 255);
     }
   }
   ctx.putImageData(img, 0, 0);
   densityCache.set(key, canvas);
   return canvas;
-}
-
-function smooth(t: number): number {
-  return t * t * (3 - 2 * t);
 }

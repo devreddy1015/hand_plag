@@ -12,11 +12,11 @@
  * Each finish starts from the flat page and works on it as pixels, so it is
  * the same at any resolution and adds nothing to the layout.
  */
-import { get2d, MM, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
+import { canBlur, get2d, MM, scratchCanvas, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
 import { clamp, hashInts, mulberry32, type Rng } from './random';
 import type { FinishLook } from './types';
 
-export interface FinishContext {
+interface FinishContext {
   target: AnyCanvas;
   ctx: Ctx2D;
   seed: number;
@@ -28,31 +28,6 @@ export interface FinishContext {
   bindingSide: 'left' | 'right';
 }
 
-const pool = new Map<string, AnyCanvas>();
-
-/** A scratch canvas of a given size, reused between pages. */
-function scratch(w: number, h: number, key: string, createCanvas: CanvasFactory): AnyCanvas {
-  const id = `${key}:${w}x${h}`;
-  let canvas = pool.get(id);
-  if (!canvas) {
-    if (pool.size > 4) pool.clear();
-    canvas = createCanvas(w, h);
-    pool.set(id, canvas);
-  }
-  const ctx = get2d(canvas);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.filter = 'none';
-  ctx.clearRect(0, 0, w, h);
-  return canvas;
-}
-
-/** Release the canvases the finishes keep. Worth calling after a high-resolution export. */
-export function releaseFinishes(): void {
-  pool.clear();
-}
-
 export function applyFinish(kind: FinishLook, fc: FinishContext): void {
   if (kind === 'scan') flatbed(fc);
   else if (kind === 'phone') phoneScan(fc);
@@ -62,7 +37,7 @@ export function applyFinish(kind: FinishLook, fc: FinishContext): void {
 /** A copy of the page as it stands, to draw back bent and lit. */
 function snapshot(fc: FinishContext): AnyCanvas {
   const { target, createCanvas } = fc;
-  const copy = scratch(target.width, target.height, 'finish', createCanvas);
+  const copy = scratchCanvas(target.width, target.height, 'finish', createCanvas);
   get2d(copy).drawImage(target as CanvasImageSource, 0, 0);
   return copy;
 }
@@ -148,7 +123,7 @@ function flatbed(fc: FinishContext): void {
   ctx.fillRect(0, 0, w, h);
   ctx.translate(w / 2 + dx, h / 2 + dy);
   ctx.rotate(angle);
-  if (softSupported(ctx)) ctx.filter = `blur(${Math.max(0.25, 0.035 * MM * scale).toFixed(2)}px)`;
+  if (canBlur(ctx)) ctx.filter = `blur(${Math.max(0.25, 0.035 * MM * scale).toFixed(2)}px)`;
   drawBowed(ctx, copy, -w / 2, -h / 2, w, h, 0, 0);
   ctx.restore();
 
@@ -235,7 +210,7 @@ function photo(fc: FinishContext): void {
   const copy = snapshot(fc);
 
   // First bow the page on a scratch sheet, then keystone it onto the desk.
-  const bowed = scratch(w, h, 'bowed', createCanvas);
+  const bowed = scratchCanvas(w, h, 'bowed', createCanvas);
   const bctx = get2d(bowed);
   const bow = (0.8 + r() * 1.6) * MM * scale * (r() < 0.5 ? -1 : 1);
   drawBowed(bctx, copy, 0, 0, w, h, bow, (r() - 0.5) * 1.2 * MM * scale);
@@ -266,13 +241,13 @@ function photo(fc: FinishContext): void {
   // Soft contact shadow under the sheet.
   ctx.save();
   ctx.globalAlpha = 0.45;
-  if (softSupported(ctx)) ctx.filter = `blur(${Math.max(2, 1.2 * MM * scale).toFixed(1)}px)`;
+  if (canBlur(ctx)) ctx.filter = `blur(${Math.max(2, 1.2 * MM * scale).toFixed(1)}px)`;
   ctx.fillStyle = 'rgba(30,24,18,0.7)';
   ctx.fillRect(-pageW / 2 + shadowSide * pageW * 0.01, -pageH / 2 + pageH * 0.012, pageW, pageH);
   ctx.restore();
 
   // Keystone: each row of the page is scaled to its share of the taper.
-  if (softSupported(ctx)) ctx.filter = `blur(${Math.max(0.3, 0.04 * MM * scale).toFixed(2)}px)`;
+  if (canBlur(ctx)) ctx.filter = `blur(${Math.max(0.3, 0.04 * MM * scale).toFixed(2)}px)`;
   const rows = Math.max(24, Math.min(260, Math.round(pageH / 6)));
   for (let i = 0; i < rows; i++) {
     const t0 = i / rows;
@@ -342,19 +317,4 @@ function woodGrain(ctx: Ctx2D, w: number, h: number, r: Rng): void {
     ctx.stroke();
   }
   ctx.restore();
-}
-
-let soft: boolean | undefined;
-function softSupported(ctx: Ctx2D): boolean {
-  if (soft === undefined) {
-    const c = ctx as CanvasRenderingContext2D;
-    if (typeof c.filter !== 'string') soft = false;
-    else {
-      const before = c.filter;
-      c.filter = 'blur(1px)';
-      soft = c.filter === 'blur(1px)';
-      c.filter = before;
-    }
-  }
-  return soft;
 }

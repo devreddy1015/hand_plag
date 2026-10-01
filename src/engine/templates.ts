@@ -20,7 +20,7 @@ export const DEFAULT_FEATURES: PaperFeatures = {
   columns: 1,
   columnGap: 8,
   columnDivider: false,
-  showThrough: false,
+  showThrough: true,
   tornEdge: false,
 };
 

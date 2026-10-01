@@ -24,8 +24,6 @@ export const HAND_CHARACTERS = {
   marks: '.,;:!?\'"-()/&+=%',
 };
 
-export const ALL_HAND_CHARACTERS = [...Object.values(HAND_CHARACTERS).join('')];
-
 /** How many times each character is written. */
 export const SAMPLES_PER_CHARACTER = 3;
 

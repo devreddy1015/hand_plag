@@ -11,8 +11,6 @@ export type { PdfOptions } from './pdf';
 
 export type ImportKind = 'pdf' | 'docx' | 'text' | 'unsupported';
 
-export const ACCEPTED = '.pdf,.docx,.txt,.md,.markdown,.text,.csv,application/pdf,text/plain';
-
 export function detectKind(file: File): ImportKind {
   const name = file.name.toLowerCase();
   if (name.endsWith('.pdf') || file.type === 'application/pdf') return 'pdf';

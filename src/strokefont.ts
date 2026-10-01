@@ -85,12 +85,3 @@ function trace(family: string, unit: string): StrokeGlyph | null {
   }
   return { strokes, advance: advance / EM };
 }
-
-/** Forget the traced letters, when a font is replaced. */
-export function forgetPenGlyphs(family?: string): void {
-  if (family === undefined) {
-    cache.clear();
-    return;
-  }
-  for (const key of [...cache.keys()]) if (key.startsWith(`${family}\u0000`)) cache.delete(key);
-}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createNoise1D, gaussian, hashInts, hashString, mulberry32 } from '../src/engine/random';
+import { createNoise1D, createTileNoise, gaussian, hashInts, hashString, mulberry32 } from '../src/engine/random';
 
 describe('random', () => {
   it('mulberry32 is deterministic and in [0, 1)', () => {
@@ -42,6 +42,23 @@ describe('random', () => {
       expect(Math.abs(v)).toBeLessThanOrEqual(1);
       expect(Math.abs(v - prev)).toBeLessThan(0.1);
       prev = v;
+    }
+  });
+
+  it('tile noise is bounded, smooth, and joins up where it wraps', () => {
+    const cells = 7;
+    const noise = createTileNoise(mulberry32(5), cells);
+    let prev = noise(0, 0.3);
+    for (let x = 0.01; x < cells * 2; x += 0.01) {
+      const v = noise(x, 0.3);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+      expect(Math.abs(v - prev)).toBeLessThan(0.05);
+      prev = v;
+    }
+    for (const [x, y] of [[0.4, 2.2], [3.9, 6.5], [6.99, 0.01]]) {
+      expect(noise(x + cells, y)).toBeCloseTo(noise(x, y), 6);
+      expect(noise(x, y - cells)).toBeCloseTo(noise(x, y), 6);
     }
   });
 });

@@ -55,11 +55,6 @@ export function loadFontCss(families: string[]): Promise<unknown> {
   );
 }
 
-/** Every family that has bundled @font-face rules, for the font gallery. */
-export function styledFamilies(): string[] {
-  return Object.keys(FONT_CSS);
-}
-
 export type FontGroup = 'Your hands' | 'Print' | 'Cursive' | 'Bold hand' | 'World scripts' | 'Your fonts';
 
 export interface FontEntry {

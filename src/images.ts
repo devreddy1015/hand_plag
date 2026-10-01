@@ -141,10 +141,6 @@ export function traceImage(image: HTMLImageElement): Sketch | null {
   };
 }
 
-export function getPicture(id: string): Picture | undefined {
-  return pictures.get(id);
-}
-
 /** Everything known about a picture, for the layout to shape its gap. */
 export function pictureMetrics(id: string): Picture | null {
   return pictures.get(id) ?? null;
@@ -166,9 +162,4 @@ export function clearPictures(prefix?: string): void {
     return;
   }
   for (const id of [...pictures.keys()]) if (id.startsWith(prefix)) pictures.delete(id);
-}
-
-/** Which of these keys have a picture behind them. */
-export function knownPictures(ids: Iterable<string>): string[] {
-  return [...ids].filter((id) => pictures.has(id));
 }

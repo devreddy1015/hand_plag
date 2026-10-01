@@ -77,10 +77,6 @@ export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
 /** Smooth 0..1 ramp. */
 export function smoothstep(t: number): number {
   const x = clamp(t, 0, 1);
@@ -98,7 +94,27 @@ export function createDrift(seed: number, wavelength: number): (t: number) => nu
   return (t: number) => clamp(a(t / wavelength) * 0.65 + b(t / (wavelength * 2.7) + 9.3) * 0.45, -1, 1);
 }
 
-/** True with probability p, consuming one sample. */
-export function chance(rng: Rng, p: number): boolean {
-  return rng() < p;
+/**
+ * Smooth 2D value noise in [0, 1) on a lattice of `cells` × `cells` that wraps
+ * round in both directions, so a tile cut from it joins up without a seam.
+ * Coordinates are in cells. The lattice is drawn from `rng` straight away.
+ */
+export function createTileNoise(rng: Rng, cells: number): (x: number, y: number) => number {
+  const lattice = new Float32Array(cells * cells);
+  for (let i = 0; i < lattice.length; i++) lattice[i] = rng();
+  return (x, y) => {
+    const fx = Math.floor(x);
+    const fy = Math.floor(y);
+    const x0 = ((fx % cells) + cells) % cells;
+    const y0 = ((fy % cells) + cells) % cells;
+    const x1 = (x0 + 1) % cells;
+    const y1 = (y0 + 1) % cells;
+    const tx = x - fx;
+    const ty = y - fy;
+    const sx = tx * tx * (3 - 2 * tx);
+    const sy = ty * ty * (3 - 2 * ty);
+    const a = lattice[y0 * cells + x0] + (lattice[y0 * cells + x1] - lattice[y0 * cells + x0]) * sx;
+    const b = lattice[y1 * cells + x0] + (lattice[y1 * cells + x1] - lattice[y1 * cells + x0]) * sx;
+    return a + (b - a) * sy;
+  };
 }

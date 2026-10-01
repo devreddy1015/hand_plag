@@ -25,7 +25,7 @@ const ADVANCED_KEY = 'handscript.advanced.v1';
 const IMPORT_KEY = 'handscript.import.v1';
 
 /** Settings that only change how a page is painted, not where the letters go. */
-const PAINT_ONLY = new Set(['inkColor', 'paperColor', 'ruleColor', 'marginColor', 'texture', 'finish', 'inkWeight']);
+const PAINT_ONLY = new Set(['inkColor', 'paperColor', 'ruleColor', 'marginColor', 'texture', 'finish', 'inkWeight', 'features.showThrough']);
 
 const $ = <T extends HTMLElement>(selector: string): T => {
   const el = document.querySelector<T>(selector);

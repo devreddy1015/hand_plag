@@ -43,6 +43,10 @@ export interface PenStyle {
   edge: number;
   /** How far a stroke thins as the pen touches down and lifts off (0..1). */
   taper: number;
+  /** How deep a groove the pen presses into the paper: a ballpoint needs bearing down on, a felt tip hardly touches. */
+  press: number;
+  /** How much of the ink soaks into the sheet and shows on the other side of it. */
+  soak: number;
 }
 
 export const PENS: Record<PenType, PenStyle> = {
@@ -59,6 +63,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.2,
     edge: 0,
     taper: 0.45,
+    press: 1,
+    soak: 0.5,
   },
   gel: {
     strokeWeight: 0.024,
@@ -73,6 +79,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.12,
     edge: 0.35,
     taper: 0.25,
+    press: 0.6,
+    soak: 0.95,
   },
   rollerball: {
     strokeWeight: 0.018,
@@ -87,6 +95,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.16,
     edge: 0.2,
     taper: 0.3,
+    press: 0.5,
+    soak: 1.05,
   },
   fountain: {
     strokeWeight: 0.016,
@@ -101,6 +111,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.24,
     edge: 0.45,
     taper: 0.35,
+    press: 0.35,
+    soak: 1.15,
   },
   calligraphy: {
     strokeWeight: 0.008,
@@ -115,6 +127,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.2,
     edge: 0.4,
     taper: 0.2,
+    press: 0.35,
+    soak: 1.15,
   },
   felt: {
     strokeWeight: 0.048,
@@ -129,6 +143,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.1,
     edge: 0.15,
     taper: 0.12,
+    press: 0.15,
+    soak: 1.4,
   },
   pencil: {
     strokeWeight: 0.004,
@@ -143,6 +159,8 @@ export const PENS: Record<PenType, PenStyle> = {
     density: 0.35,
     edge: 0,
     taper: 0.5,
+    press: 0.8,
+    soak: 0.12,
   },
 };
 

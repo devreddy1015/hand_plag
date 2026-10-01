@@ -53,7 +53,7 @@ export interface PaperFeatures {
   columnGap: number;
   /** Draw a line down the gutter. */
   columnDivider: boolean;
-  /** Faint ink showing through from the other side of the sheet. */
+  /** The sheet is written on both sides: the other side shows faintly through, mirrored. */
   showThrough: boolean;
   /** Torn-out-of-a-notebook left edge. */
   tornEdge: boolean;
@@ -121,6 +121,7 @@ export interface Settings {
   marginColor: string;
   margins: Margins;
   features: PaperFeatures;
+  /** Grain in the paper, and the groove the pen presses into it. */
   texture: boolean;
   finish: FinishLook;
 
