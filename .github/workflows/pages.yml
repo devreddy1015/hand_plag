@@ -31,6 +31,14 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # The site's "Android app" button downloads handscript.apk from beside it,
+      # so build the app too and publish the APK with the site.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm run app:apk
+      - run: cp app/android/app/build/outputs/apk/debug/app-debug.apk website/dist/handscript.apk
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

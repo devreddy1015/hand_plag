@@ -159,10 +159,14 @@ anywhere and from any sub-path. No server, no API keys, no backend.
 The app works offline: everything it needs is inside the APK. An exported PDF or image is
 saved to the phone's **Documents/Handscript** folder, and the share sheet opens on it.
 
-**Without installing anything**: every push to `main` builds the app on GitHub
+**Easiest**: open the website on the phone and tap **Android app** in the top bar. The
+Pages deploy builds the APK and publishes it beside the site as `handscript.apk`, so the
+link always serves the app built from the same commit as the site. Open the download and
+allow "install unknown apps" for the browser when Android asks.
+
+**From Actions**: every push to `main` also builds the app on its own
 (`.github/workflows/android.yml`). Open the run under **Actions**, download the
-`handscript-apk` artifact, unzip it, and open `app-debug.apk` on the phone (allow
-"install unknown apps" for the browser or Files app when Android asks).
+`handscript-apk` artifact, unzip it, and open `app-debug.apk` on the phone.
 
 **On your own machine** (needs JDK 21 and the Android SDK, which Android Studio installs):
 
