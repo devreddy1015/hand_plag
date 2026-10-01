@@ -1,0 +1,35 @@
+name: Android app
+
+# Builds the app on every push to main, and on demand (Actions → Android app →
+# Run workflow). The APK is attached to the run as the "handscript-apk"
+# artifact, ready to install on a phone by hand.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      # Capacitor 8 builds with JDK 21; the runner already carries the Android SDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm test
+      - run: npm run app:apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handscript-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

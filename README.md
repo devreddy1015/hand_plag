@@ -3,7 +3,8 @@
 Turn typed text — or a PDF, or a Word file — into realistic handwriting on real paper,
 then download it as a PDF or as images. It is free, needs no sign-up, has no page limit
 and adds no watermark. Everything runs in the browser: documents, fonts and text never
-leave the device.
+leave the device. It comes two ways: a **website**, and an **Android app** that saves
+straight to the phone and shares to WhatsApp, Drive or Classroom.
 
 ![The Handscript editor, with an imported document written out on ruled paper](docs/screenshot.jpg)
 
@@ -116,20 +117,33 @@ The panel opens with the settings most people need — the paper, the hand, the 
 **Download PDF** sits in the top bar. **All settings** in the header brings out the rest: margins, printed
 furniture, the ten realism weights, page ranges and the like. The choice is remembered.
 
-## Run it
+## Project layout
+
+```
+website/   the editor and everything it is built from: engine, importers, UI, tests
+app/       the Android app: the website's editor in a native shell (Capacitor)
+```
+
+The app does not keep a second copy of the editor. It is built from `website/`'s own
+source with one module swapped: `#platform` (`website/src/platform.ts` on the web,
+`app/src/platform.ts` in the app) holds the only code that differs, which is where a
+finished file goes and what the Android back button does. Fix or improve the editor once,
+in `website/`, and both get it.
+
+Both folders are npm workspaces of the root `package.json`, so one `npm install` at the
+top sets up both.
+
+## The website
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
 npm test           # unit tests: layout, paper, markup, PDF reflow, figures, tracing, letter shapes, hands
-npm run build      # static site in dist/
-npm run preview    # serve the built site
+npm run build      # static site in website/dist/
 ```
 
-## Deploy it
-
-`dist/` is a plain static site with relative asset paths, so it can be hosted anywhere and
-from any sub-path. No server, no API keys, no backend.
+`website/dist/` is a plain static site with relative asset paths, so it can be hosted
+anywhere and from any sub-path. No server, no API keys, no backend.
 
 - **GitHub Pages**: push to `main`; the included workflow (`.github/workflows/pages.yml`)
   builds and publishes it to https://devreddy1015.github.io/hand_plag/. This needs Pages
@@ -137,8 +151,33 @@ from any sub-path. No server, no API keys, no backend.
   branch" mode, the `github-pages` environment only allows that one branch, and the
   deploy step is refused with "Branch main is not allowed to deploy to github-pages".
 - **Netlify / Cloudflare Pages / Vercel**: build command `npm run build`, publish
-  directory `dist`.
-- **Anything else**: copy `dist/` onto any static host or CDN.
+  directory `website/dist`.
+- **Anything else**: copy `website/dist/` onto any static host or CDN.
+
+## The Android app
+
+The app works offline: everything it needs is inside the APK. An exported PDF or image is
+saved to the phone's **Documents/Handscript** folder, and the share sheet opens on it.
+
+**Without installing anything**: every push to `main` builds the app on GitHub
+(`.github/workflows/android.yml`). Open the run under **Actions**, download the
+`handscript-apk` artifact, unzip it, and open `app-debug.apk` on the phone (allow
+"install unknown apps" for the browser or Files app when Android asks).
+
+**On your own machine** (needs JDK 21 and the Android SDK, which Android Studio installs):
+
+```bash
+npm install
+npm run app:apk    # builds the editor, copies it into the app, and builds
+                   # app/android/app/build/outputs/apk/debug/app-debug.apk
+npm run app:open   # the same, then opens the project in Android Studio
+```
+
+The debug APK is for installing by hand. The Play Store wants a release bundle signed
+with your own key: in Android Studio, **Build → Generate Signed App Bundle**.
+
+The app's icon and splash screen are made from `app/assets/`; after changing those, run
+`npx @capacitor/assets generate --android` in `app/` (on Node 24 or older).
 
 ## How it works
 
@@ -153,30 +192,32 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 
 | Path | Role |
 | --- | --- |
-| `src/engine/` | The portable engine. No DOM: it needs only a Canvas 2D context and a text measurer, so the same code can run in a Web Worker or on a server (for example with `@napi-rs/canvas`) for a future rendering API. |
-| `src/engine/layout.ts` | Splits blocks into lines and pages. Samples the jitter for each glyph from seeds based on position, so editing one paragraph doesn't reshuffle the others. |
-| `src/engine/render.ts` | Paints one page at any scale: paper, then the ink layer blended with multiply, then the finish. Letters are drawn from their bent outlines, pen lines as pen strokes. |
-| `src/engine/shapes.ts` | Letter outlines and the two-layer bend (habitual form, and this copy) that keeps any two copies of a letter from matching. |
-| `src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. |
-| `src/engine/symbols.ts` | Greek letters and mathematical signs as pen strokes, fitted to the hand they are written in. |
-| `src/engine/finish.ts` | How the page was captured: phone-app scan, flatbed scan or photo — bowed paper, uneven light, shadows, enhancement and grain. |
-| `src/strokefont.ts` | Turns each letter of a font into the pen strokes it was drawn with, by thinning it to its centre line. |
-| `src/engine/sketch.ts` | Drawing a traced diagram by hand: bowed, unsteady lines, overshooting corners, closing overlaps, hatching per colour. |
-| `src/engine/paper.ts` | Paper sizes, page geometry, printed furniture and the procedural paper texture. |
-| `src/engine/templates.ts` | The paper templates and the features each one turns on. |
-| `src/engine/markup.ts` | The small Markdown subset that maps onto things a hand can do. |
-| `src/engine/segment.ts` | Grapheme clusters, whole-word units for scripts that need shaping, CJK break points, script detection, hyphenation points. |
-| `src/import/reflow.ts` | Rebuilding a document from positioned text: lines, columns, paragraphs, headings, lists, running heads. Pure, and tested on its own. |
-| `src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, which text belongs to which figure, and fitting a box to the ink. Pure, and tested on its own. |
-| `src/import/math.ts` | Finding the displayed equations, so they can be copied out rather than mangled. Pure, and tested on its own. |
-| `src/import/vectorize.ts` | Tracing a picture into pen paths: ink threshold, solid areas by opening, Zhang–Suen thinning, path following through junctions, spur pruning, simplification. Pure, and tested on its own. |
-| `src/images.ts`, `src/store.ts` | The pictures a document refers to, decoded and ready to draw, traced if they are line art, and kept in IndexedDB so a document keeps its figures between visits. |
-| `src/outlines.ts` | Reads the letter outlines out of each hand's WOFF files (opentype.js), loaded on first use. |
-| `src/hands.ts`, `src/ui/pad.ts`, `src/ui/hand-dialog.ts` | Your own handwriting: the writing pad, the samples, and turning them into a hand. |
-| `src/import/pdf.ts`, `docx.ts` | The readers themselves, loaded on first use. |
-| `src/fonts.ts` | Font catalog, fallback stacks, per-script size matching, custom font upload. `@font-face` rules load per font, on demand. |
-| `src/export/` | PDF (pdf-lib) and PNG/JPEG/ZIP (fflate). Both load only when you first export. |
-| `src/main.ts`, `src/ui/` | The editor. |
+| `website/src/engine/` | The portable engine. No DOM: it needs only a Canvas 2D context and a text measurer, so the same code can run in a Web Worker or on a server (for example with `@napi-rs/canvas`) for a future rendering API. |
+| `website/src/engine/layout.ts` | Splits blocks into lines and pages. Samples the jitter for each glyph from seeds based on position, so editing one paragraph doesn't reshuffle the others. |
+| `website/src/engine/render.ts` | Paints one page at any scale: paper, then the ink layer blended with multiply, then the finish. Letters are drawn from their bent outlines, pen lines as pen strokes. |
+| `website/src/engine/shapes.ts` | Letter outlines and the two-layer bend (habitual form, and this copy) that keeps any two copies of a letter from matching. |
+| `website/src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. |
+| `website/src/engine/depth.ts` | Paper with depth: the groove each stroke presses into the sheet, and the other side of the sheet showing through, mirrored and broken up by the fibre. |
+| `website/src/engine/symbols.ts` | Greek letters and mathematical signs as pen strokes, fitted to the hand they are written in. |
+| `website/src/engine/finish.ts` | How the page was captured: phone-app scan, flatbed scan or photo — bowed paper, uneven light, shadows, enhancement and grain. |
+| `website/src/strokefont.ts` | Turns each letter of a font into the pen strokes it was drawn with, by thinning it to its centre line. |
+| `website/src/engine/sketch.ts` | Drawing a traced diagram by hand: bowed, unsteady lines, overshooting corners, closing overlaps, hatching per colour. |
+| `website/src/engine/paper.ts` | Paper sizes, page geometry, printed furniture and the procedural paper texture. |
+| `website/src/engine/templates.ts` | The paper templates and the features each one turns on. |
+| `website/src/engine/markup.ts` | The small Markdown subset that maps onto things a hand can do. |
+| `website/src/engine/segment.ts` | Grapheme clusters, whole-word units for scripts that need shaping, CJK break points, script detection, hyphenation points. |
+| `website/src/import/reflow.ts` | Rebuilding a document from positioned text: lines, columns, paragraphs, headings, lists, running heads. Pure, and tested on its own. |
+| `website/src/import/figures.ts` | Finding the figures: connected blocks of drawing, what is furniture and what is a diagram, which text belongs to which figure, and fitting a box to the ink. Pure, and tested on its own. |
+| `website/src/import/math.ts` | Finding the displayed equations, so they can be copied out rather than mangled. Pure, and tested on its own. |
+| `website/src/import/vectorize.ts` | Tracing a picture into pen paths: ink threshold, solid areas by opening, Zhang–Suen thinning, path following through junctions, spur pruning, simplification. Pure, and tested on its own. |
+| `website/src/images.ts`, `website/src/store.ts` | The pictures a document refers to, decoded and ready to draw, traced if they are line art, and kept in IndexedDB so a document keeps its figures between visits. |
+| `website/src/outlines.ts` | Reads the letter outlines out of each hand's WOFF files (opentype.js), loaded on first use. |
+| `website/src/hands.ts`, `website/src/ui/pad.ts`, `website/src/ui/hand-dialog.ts` | Your own handwriting: the writing pad, the samples, and turning them into a hand. |
+| `website/src/import/pdf.ts`, `docx.ts` | The readers themselves, loaded on first use. |
+| `website/src/fonts.ts` | Font catalog, fallback stacks, per-script size matching, custom font upload. `@font-face` rules load per font, on demand. |
+| `website/src/export/` | PDF (pdf-lib) and PNG/JPEG/ZIP (fflate). Both load only when you first export. |
+| `website/src/main.ts`, `website/src/ui/` | The editor. |
+| `website/src/platform.ts`, `app/src/platform.ts` | What differs between the website and the app: saving a file (a download, or Documents and the share sheet) and the back button. |
 
 Layout units are CSS pixels at 96 DPI. A page is laid out once and rendered at any scale:
 the screen's pixel density for the preview, or the chosen DPI for export. Every random
