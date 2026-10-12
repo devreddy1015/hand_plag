@@ -3,3 +3,7 @@ dist/
 *.log
 .DS_Store
 website/public/font-licenses.txt
+
+# Built and generated files: the APK is built by CI, handwritten output is made by the app
+*.apk
+samples/*_handwritten.pdf

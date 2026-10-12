@@ -75,13 +75,57 @@ function trace(family: string, unit: string): StrokeGlyph | null {
   });
   if (!traced || traced.paths.length === 0 || traced.paths.length > 12) return null;
 
-  const strokes: Float32Array[] = [];
-  for (const path of traced.paths) {
-    const out: number[] = [];
-    for (let k = 0; k < path.pts.length; k += 2) out.push((path.pts[k] - pad) / EM, (path.pts[k + 1] - baseline) / EM, 1);
-    // A closed loop goes round once more by a hair, so the join does not show.
-    if (path.closed && out.length >= 6) out.push(out[0], out[1], 1);
-    strokes.push(Float32Array.from(out));
+  const strokes = traced.paths.map((path) => {
+    const pts: number[] = [];
+    for (let k = 0; k < path.pts.length; k += 2) pts.push((path.pts[k] - pad) / EM, (path.pts[k + 1] - baseline) / EM);
+    return naturalWay(pts, path.closed);
+  });
+  return { strokes: naturalOrder(strokes), advance: advance / EM };
+}
+
+/**
+ * Run a traced stroke the way a hand writes it. Thinning a letter gives its
+ * lines but not which way the pen went, and that matters: a down-stroke is
+ * pressed harder than an up-stroke, a stroke starts and ends differently, and
+ * a writer makes each letter the same way every time. So a stroke that runs
+ * mostly up and down is written downwards, one that runs across from left to
+ * right, and a loop anticlockwise from its top, as an "o" is.
+ */
+export function naturalWay(pts: number[], closed: boolean): Float32Array {
+  const n = pts.length / 2;
+  let order: number[] = Array.from({ length: n }, (_, i) => i);
+  if (closed && n >= 3) {
+    // Start at the top of the loop, and go round to the left from there.
+    let top = 0;
+    for (let i = 1; i < n; i++) if (pts[i * 2 + 1] < pts[top * 2 + 1] - 1e-6 || (Math.abs(pts[i * 2 + 1] - pts[top * 2 + 1]) <= 1e-6 && pts[i * 2] > pts[top * 2])) top = i;
+    order = order.map((_, k) => (top + k) % n);
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      area += pts[i * 2] * pts[j * 2 + 1] - pts[j * 2] * pts[i * 2 + 1];
+    }
+    // y points down, so a loop that runs anticlockwise on the page has a negative area.
+    if (area > 0) order = [order[0], ...order.slice(1).reverse()];
+  } else if (n >= 2) {
+    const dx = pts[(n - 1) * 2] - pts[0];
+    const dy = pts[(n - 1) * 2 + 1] - pts[1];
+    const backwards = Math.abs(dy) >= Math.abs(dx) * 0.6 ? dy < 0 : dx < 0;
+    if (backwards) order.reverse();
   }
-  return { strokes, advance: advance / EM };
+  const out: number[] = [];
+  for (const i of order) out.push(pts[i * 2], pts[i * 2 + 1], 1);
+  // A closed loop goes round once more by a hair, so the join does not show.
+  if (closed && out.length >= 6) out.push(out[0], out[1], 1);
+  return Float32Array.from(out);
+}
+
+/** The order a letter's strokes are written in: its main strokes from left to right, then the dots and short bars. */
+function naturalOrder(strokes: Float32Array[]): Float32Array[] {
+  const length = (s: Float32Array) => {
+    let total = 0;
+    for (let i = 3; i < s.length; i += 3) total += Math.hypot(s[i] - s[i - 3], s[i + 1] - s[i - 2]);
+    return total;
+  };
+  const minor = (s: Float32Array) => (length(s) < 0.15 ? 1 : 0);
+  return [...strokes].sort((a, b) => minor(a) - minor(b) || a[0] - b[0]);
 }

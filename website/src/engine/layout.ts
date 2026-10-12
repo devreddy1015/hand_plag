@@ -5,7 +5,6 @@ import { nameDateFields } from './paper';
 import { sketchStrokes, splitSketch } from './sketch';
 import type { DocumentLayout, InkStroke, Measurer, PageGeometry, PageLayout, PlacedGlyph, PlacedImage, Settings, Sketch, SketchLabel, TextArea } from './types';
 
-export { PAGE_BREAK } from './markup';
 
 const DEG = Math.PI / 180;
 
@@ -16,6 +15,15 @@ const MAX_PAGES = 4000;
  * Jitter amplitudes (one standard deviation) at messiness 0.5 with every
  * weight at 1. Lengths are fractions of the line spacing or font size so
  * the look stays the same at any paper size or resolution.
+ *
+ * Most of the variation in a real hand is smooth: the slant, the height and
+ * the width of the letters swell and ebb along a line over a centimetre or
+ * two, and the baseline bends gently. What changes from one letter to the
+ * next on its own is small, and a writer's slant is a habit that hardly
+ * moves — a print hand stands much less slant wander along a line than a
+ * cursive one before it looks wrong (Cheng and Lopresti). A print hand whose
+ * letters lean every which way, or hop up and down inside a word, reads as
+ * made.
  */
 const BASE = {
   baselineRandom: 0.02, // × line spacing
@@ -27,8 +35,8 @@ const BASE = {
   slopeDeg: 0.25,
   indent: 0.14, // × line spacing
   slantDriftDeg: 2.5,
-  slantRandomDeg: 1.4,
-  personaSkewDeg: 3,
+  slantRandomDeg: 1,
+  personaSkewDeg: 1.8,
   personaScale: 0.035,
   personaRotDeg: 1.2,
   personaBaseline: 0.012, // × line spacing
@@ -41,7 +49,25 @@ const BASE = {
   driftSlantDeg: 1.8,
   driftSpacing: 0.06,
   driftBaseline: 0.05, // × line spacing, unruled paper only
+  // Smooth swells along a line: letters taller, then wider, then back.
+  heightWave: 0.035,
+  widthWave: 0.03,
 };
+
+/** How much of one letter's lift above or below the line carries into the next: a hand moves on, it does not jump. */
+const BASELINE_CARRY = 0.65;
+
+/** The least space a writer leaves between two words, in x-heights: about the width of an "o". */
+const MIN_WORD_SPACE = 0.75;
+
+/** Letters that begin with an upright stroke, which an arm reaching from the letter before would join into a new letter. */
+const STEM_FIRST = /^[nmhuirlkbpjBDEFHIKLMNPRU]/;
+
+/** The least gap left between the ink of two words, in x-heights. */
+const MIN_INK_GAP = 0.6;
+
+/** The least gap left between the ink of two letters that are not joined, as a fraction of the font size. */
+const MIN_CLEARANCE = 0.03;
 
 /** Layout units per millimetre. */
 const MM_UNITS = 96 / 25.4;
@@ -59,7 +85,7 @@ const BASELINE_LIFT = 0.06; // × line spacing
 const PERSONA_VARIANTS = 5;
 
 /** How much each pen varies in ink flow. */
-export const PEN_INK_VARIATION: Record<Settings['pen'], number> = {
+const PEN_INK_VARIATION: Record<Settings['pen'], number> = {
   ballpoint: 0.14,
   gel: 0.1,
   rollerball: 0.14,
@@ -116,6 +142,10 @@ interface Word {
   /** Squeezed in above the line with a caret, as a writer does when a word is missed. */
   inserted: boolean;
   em: number;
+  /** How far the ink of the first letter starts after the word's start, band by band (NaN: no ink). */
+  lead: Float32Array | null;
+  /** How far the ink of the last letter reaches past the word's end, band by band. */
+  tail: Float32Array | null;
 }
 
 interface Persona {
@@ -201,7 +231,23 @@ export interface LayoutOptions {
    * keeps it.
    */
   substitute?: (unit: string) => string;
+  /**
+   * Where a unit's ink starts and ends across its width, in each of its
+   * zones, so neighbouring letters can be kept from running into each other.
+   * Null when it is not known.
+   */
+  inkSpan?: (unit: string) => InkSpan | null;
 }
+
+/**
+ * The left and right ends of a letter's ink in em (fractions of the font
+ * size), in the bands of `INK_BANDS` from top to bottom. Null for a band
+ * with no ink.
+ */
+export type InkSpan = readonly (readonly [number, number] | null)[];
+
+/** Horizontal bands a letter's height is cut into to see where its ink reaches, in em, y down from the baseline. */
+export const INK_BANDS = { top: -1.1, height: 0.05, count: 32 };
 
 /**
  * Lay out text into pages of placed glyphs and pen strokes. Pure given the
@@ -236,6 +282,8 @@ export function layoutDocument(
     wordBaseline: BASE.wordBaseline * spacing * m * w.word,
     wordSlant: BASE.wordSlantDeg * m * w.word,
     wordScale: BASE.wordScale * m * w.word,
+    height: BASE.heightWave * m * w.scale,
+    width: BASE.widthWave * m * w.spacing,
     ink: (PEN_INK_VARIATION[s.pen] ?? 0.2) * clamp(w.ink, 0, 2),
     // Cursive letters are bent less, so the strokes that join them still meet.
     shape: m * clamp(w.shape ?? 1, 0, 2) * (options.connected ? 0.75 : 1),
@@ -279,7 +327,11 @@ export function layoutDocument(
 
   const unitScale = options.unitScale ?? (() => 1);
   const substitute = options.substitute ?? ((unit: string) => unit);
-  const baseSpaceWidth = Math.max(width(' '), fontPx * 0.2) * s.wordSpacing;
+  const inkSpan = options.connected ? () => null : (options.inkSpan ?? (() => null));
+  const clearFrom = Math.max(0, Math.ceil((-0.65 * handX - INK_BANDS.top) / INK_BANDS.height));
+  // A font's space is set for print, and in many hands it is far narrower
+  // than the gap anyone leaves between written words.
+  const baseSpaceWidth = Math.max(width(' '), fontPx * 0.2, handX * fontPx * MIN_WORD_SPACE) * s.wordSpacing;
 
   // ------------------------------------------------------------ word building
 
@@ -337,6 +389,7 @@ export function layoutDocument(
         }
       }
       const n = letters.length;
+      let lift = gaussian(rng);
       for (let i = 0; i < n; i++) {
         const c = letters[i];
         const next = i + 1 < n ? letters[i + 1] : undefined;
@@ -350,14 +403,32 @@ export function layoutDocument(
         const drawn = width(c) * sx;
         const base = kernAdvance(c, next) * sx;
         const gapJitter = clamp(gaussian(rng), -2, 2) * amp.letterGap;
-        const advance = next === undefined ? drawn : Math.max(base * 0.88, base + letterSpacing + gapJitter);
+        let advance = next === undefined ? drawn : Math.max(base * 0.88, base + letterSpacing + gapJitter);
+        if (next !== undefined) {
+          // Letters may come close, but two that are not joined never run
+          // into each other: an "r" and an "n" that touch read as an "m".
+          const here = inkSpan(c);
+          const there = inkSpan(next);
+          if (here && there) {
+            // An arm or a cross-bar high up may touch a round letter after
+            // it, as in any hand, and it still reads; touching a stem it
+            // makes an arch, and "rn" reads as "m", "cl" as "d".
+            const top = STEM_FIRST.test(next) ? 0 : clearFrom;
+            for (let z = top; z < Math.min(here.length, there.length); z++) {
+              const a = here[z];
+              const b = there[z];
+              if (a && b) advance = Math.max(advance, (a[1] - b[0] + MIN_CLEARANCE) * fontPx * sx);
+            }
+          }
+        }
+        if (i > 0) lift = BASELINE_CARRY * lift + Math.sqrt(1 - BASELINE_CARRY * BASELINE_CARRY) * gaussian(rng);
         units.push({
           text: c,
           width: drawn,
           advance,
           scaleX: sx,
           scaleY: sy,
-          nBaseline: gaussian(rng),
+          nBaseline: lift,
           nRotation: gaussian(rng),
           nSlant: gaussian(rng),
           pSkew: persona.skew,
@@ -391,8 +462,36 @@ export function layoutDocument(
       falseStart: [],
       inserted: false,
       em,
+      ...inkEnds(units),
     };
     return word;
+  };
+
+  /** Where the ink of a word's first and last letters reaches past its ends, band by band. */
+  const inkEnds = (units: Unit[]): { lead: Float32Array | null; tail: Float32Array | null } => {
+    const first = units[0];
+    const last = units[units.length - 1];
+    const left = first ? inkSpan(first.text) : null;
+    const right = last ? inkSpan(last.text) : null;
+    return {
+      lead: left ? Float32Array.from(left, (band) => (band ? band[0] * fontPx * first.scaleX : NaN)) : null,
+      tail: right ? Float32Array.from(right, (band) => (band ? band[1] * fontPx * last.scaleX - last.width : NaN)) : null,
+    };
+  };
+
+  /**
+   * The least gap that leaves the ink of two words apart by `MIN_INK_GAP`
+   * x-heights where they face each other: a tall letter leaning into the
+   * next word, or a tail sweeping back under the last, must not close it.
+   */
+  const inkGap = (before: Word, after: Word): number => {
+    if (!before.tail || !after.lead) return 0;
+    let need = 0;
+    for (let z = 0; z < Math.min(before.tail.length, after.lead.length); z++) {
+      const v = before.tail[z] - after.lead[z];
+      if (v > need) need = v;
+    }
+    return need + MIN_INK_GAP * handX * fontPx;
   };
 
   /** Letters the writer started, crossed out, and wrote again. */
@@ -520,6 +619,8 @@ export function layoutDocument(
   const slantNoise = createNoise1D(hashInts(s.seed, 0x51a7));
   const inkNoise = createNoise1D(hashInts(s.seed, 0x1c4));
   const pressureNoise = createNoise1D(hashInts(s.seed, 0x9e55));
+  const heightNoise = createNoise1D(hashInts(s.seed, 0x4e16));
+  const widthNoise = createNoise1D(hashInts(s.seed, 0x3d7));
   const driftSize = createDrift(hashInts(s.seed, 0x5123), 11);
   const driftSlant = createDrift(hashInts(s.seed, 0x51a2), 17);
   const driftGap = createDrift(hashInts(s.seed, 0x6a70), 13);
@@ -571,6 +672,9 @@ export function layoutDocument(
     /** Spans of x to underline once the line is placed. */
     const underlines: { from: number; to: number }[] = [];
     let run: { from: number; to: number } | null = null;
+    // A heading is underlined in one go, or a word at a time with the pen
+    // lifted between, each line at its own angle.
+    const perWord = rng() < 0.35;
 
     const drawUnits = (
       units: Unit[],
@@ -598,14 +702,16 @@ export function layoutDocument(
         const flow = (rel + lineNoise * 40) / (fontPx * 5);
         const bold = (u.em & EM_BOLD) !== 0;
         const sc = sizeDrift * extra;
+        const taller = 1 + heightNoise(rel / (spacing * 1.6) + lineNoise) * amp.height;
+        const wider = 1 + widthNoise(rel / (spacing * 2.4) + lineNoise) * amp.width;
         const glyph: PlacedGlyph = {
           text: u.text,
           x: rtl ? area.left + area.right - x - u.width * extra : x,
           y,
           rotation: slope + u.nRotation * amp.rotation * fatigue + u.pRotation,
           skew: Math.tan(clamp(slantDeg, -45, 45) * DEG) + u.pSkew,
-          scaleX: u.scaleX * sc,
-          scaleY: u.scaleY * sc,
+          scaleX: u.scaleX * sc * wider,
+          scaleY: u.scaleY * sc * taller,
           opacity: clamp(1 - amp.ink * (0.5 + 0.5 * inkNoise(flow)), 0.15, 1),
           pressure: clamp(0.5 + 0.5 * pressureNoise(flow * 0.7 + 11) + (bold ? 0.35 : 0), 0, 1),
           shade: clamp(u.shade + (bold ? 0.25 : 0), -1, 1),
@@ -655,7 +761,7 @@ export function layoutDocument(
 
       const underlined = line.underline || (word.em & EM_UNDERLINE) !== 0;
       if (underlined) {
-        if (run && span.from - run.to < baseSpaceWidth * 2) run.to = span.to;
+        if (run && !perWord && span.from - run.to < baseSpaceWidth * 2) run.to = span.to;
         else {
           if (run) underlines.push(run);
           run = { from: span.from, to: span.to };
@@ -671,7 +777,8 @@ export function layoutDocument(
       if (span.to - span.from < line.fontPx * 0.2) continue;
       const from = rtl ? area.left + area.right - span.to : span.from;
       const to = rtl ? area.left + area.right - span.from : span.to;
-      page.strokes.push(underlineStroke(from, to, baseY + line.fontPx * 0.17, line.fontPx, rng, slope));
+      const tilt = slope + gaussian(rng) * 0.012;
+      page.strokes.push(underlineStroke(from, to, baseY + line.fontPx * (0.17 + gaussian(rng) * 0.03), line.fontPx, rng, tilt));
     }
   };
 
@@ -1056,7 +1163,11 @@ export function layoutDocument(
         continue;
       }
 
-      const gap = word.gap * gapAfterFactor(items[items.length - 1].word.units.map((u) => u.text).join('')) * gapBeforeFactor(word.units[0]?.text ?? '');
+      const before = items[items.length - 1].word;
+      const gap = Math.max(
+        word.gap * gapAfterFactor(before.units.map((u) => u.text).join('')) * gapBeforeFactor(word.units[0]?.text ?? ''),
+        word.spacesBefore > 0 ? inkGap(before, word) : 0,
+      );
       const needed = x + gap + word.width;
       if (needed <= avail) {
         items.push({ word, gap });
@@ -1075,8 +1186,10 @@ export function layoutDocument(
         flush();
         continue;
       }
-      const hyphenTarget = word.units.length > 5 ? unitsThatFit(word, avail - x - gap - lineFontPx * 0.3) : 0;
-      if (fill > 0.25 && shortfall > baseSpaceWidth * 3 && hyphenTarget >= 3) {
+      // Most writers carry a word over rather than break it; a long one, at
+      // the end of a line with a lot of room left, is the exception.
+      const hyphenTarget = word.units.length >= 7 ? unitsThatFit(word, avail - x - gap - lineFontPx * 0.3) : 0;
+      if (fill > 0.45 && shortfall > baseSpaceWidth * 4 && hyphenTarget >= 3) {
         // 2. Break the word with a hyphen.
         const at = hyphenPoint(
           word.units.map((u) => u.text),

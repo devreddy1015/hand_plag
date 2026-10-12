@@ -1,7 +1,7 @@
 import { impress, otherSide, releaseDepth } from './depth';
 import { applyFinish } from './finish';
 import { canBlur, drawPaper, get2d, MM, releaseScratch, scratchCanvas, type AnyCanvas, type CanvasFactory, type Ctx2D } from './paper';
-import { penFor, smoothSamples, tracePenStroke, type PenStyle } from './pen';
+import { penDynamics, penFor, smoothSamples, tracePenStroke, type PenStyle, type Sample, type StrokeShape } from './pen';
 import { clamp, createTileNoise, hashInts, mulberry32, smoothstep } from './random';
 import { createWarp, forEachPoint, traceOutline, warpStroke, type GlyphShapes, type Outline, type StrokeGlyph } from './shapes';
 import type { DocumentLayout, InkStroke, PageLayout, PlacedGlyph, PlacedImage, Settings } from './types';
@@ -156,7 +156,7 @@ function drawInk(
     const written = !g.rtl && shapes?.strokeGlyph ? shapes.strokeGlyph(g.text, g.variant ?? 0) : null;
     if (written) {
       ctx.globalAlpha = alpha;
-      drawStrokeGlyph(ctx, g, written, shapes!, pen, fontPx, scale, weight, plain, s.seed);
+      drawStrokeGlyph(ctx, g, written, shapes!, pen, fontPx, scale, weight, plain, s.seed, edgeOf(palette, g.shade));
       continue;
     }
 
@@ -199,7 +199,7 @@ function drawInk(
     if (outline && pen.edge > 0 && !plain) {
       placeGlyph(ctx, g, scale, g.x, g.y);
       ctx.globalAlpha = alpha * pen.edge * 0.55;
-      ctx.strokeStyle = palette[Math.min(palette.length - 1, Math.round(clamp(g.shade + 0.7, -1, 1) * SHADE_STEPS) + SHADE_STEPS)];
+      ctx.strokeStyle = edgeOf(palette, g.shade);
       ctx.lineWidth = fontPx * 0.011;
       ctx.beginPath();
       traceOutline(ctx, outline, fontPx, warp);
@@ -286,6 +286,7 @@ function drawStrokeGlyph(
   weight: number,
   plain: boolean,
   seed: number,
+  edgeColor: string,
 ): void {
   // Your own letters already differ copy to copy; they are bent only a little.
   const warp =
@@ -332,46 +333,221 @@ function drawStrokeGlyph(
       pts[i + 2] = stroke[i + 2];
     }
     const samples = smoothSamples(pts, 3, Math.max(0.25, 0.6 / scale));
-    pressureAlong(samples, rng, plain ? 0 : 1);
+    const speed = plain ? null : penDynamics(samples, rng, fontPx, pen.flow);
     // Each stroke is its own pass of the pen, so where two cross, or a loop
     // closes over its start, the ink lies twice and comes out darker.
-    ctx.globalAlpha = alpha * (0.9 + rng() * 0.1);
-    ctx.beginPath();
-    tracePenStroke(ctx, samples, shape);
-    ctx.fill();
-    // Now and then a ballpoint leaves a bead of ink where it touches down.
-    if (!plain && samples.length > 3 && rng() < pen.pooling * 0.07) {
-      const s0 = samples[0];
-      ctx.globalAlpha = alpha * 0.85;
-      ctx.beginPath();
-      ctx.arc(s0.x, s0.y, width * (0.55 + rng() * 0.25), 0, Math.PI * 2);
-      ctx.fill();
-    }
+    inkStroke(ctx, samples, shape, speed, pen, rng, scale, alpha * (0.9 + rng() * 0.1), edgeColor);
   });
   ctx.globalAlpha = alpha;
 }
 
+/** Layout units per millimetre: the ball and the paper are the same size at any font size. */
+const MM_UNITS = 96 / 25.4;
+
+/** A stretch of a stroke where the pen laid down less ink than elsewhere. */
+interface Thin {
+  from: number;
+  to: number;
+  /** Across the stroke: centre offset (or a drift over the stretch) and half the width, in page units. */
+  offset: number | ((t: number) => number);
+  half: number;
+  /** How much of the ink is there, 0..1. */
+  keep: number;
+}
+
 /**
- * How hard the pen pressed along a stroke. A hand bears down on strokes that
- * pull towards it and eases off on those that push away, and the pressure
- * wanders a little on top of that; so down-strokes come out a shade wider.
+ * Draw one pen stroke as a pen would leave it.
+ *
+ * The outline alone is what a plotter draws. A close look at real writing
+ * finds more, and each of these is drawn here when `speed` says how the pen
+ * moved: the edge of gel or fountain ink drying darker; a ballpoint's pale
+ * streaks along a quick stretch, drifting across the line from the inside of
+ * a curve to the outside; a skip where the pen ran fast; a pale first
+ * fraction of a millimetre while the ball starts to roll; a bead of ink where
+ * the pen all but stopped to turn back.
+ *
+ * Thin ink is ink this stroke never laid down, so it is left out of the fill
+ * and only part of it put back: lightening the page instead would also wipe
+ * ink an earlier stroke left where the two cross.
  */
-function pressureAlong(samples: { x: number; y: number; p: number }[], rng: () => number, amount: number): void {
-  if (amount === 0 || samples.length < 3) return;
-  const phase = rng() * Math.PI * 2;
-  const wavelength = 6 + rng() * 6;
-  let along = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const a = samples[Math.max(0, i - 1)];
-    const b = samples[Math.min(samples.length - 1, i + 1)];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy) || 1;
-    if (i > 0) along += Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
-    const down = dy / len;
-    const wobble = Math.sin(along / wavelength + phase) * 0.06;
-    samples[i].p = Math.max(0.3, Math.min(1, samples[i].p * (0.86 + 0.14 * down + wobble)));
+function inkStroke(
+  ctx: Ctx2D,
+  samples: Sample[],
+  shape: StrokeShape,
+  speed: Float32Array | null,
+  pen: PenStyle,
+  rng: () => number,
+  scale: number,
+  alpha: number,
+  edgeColor: string,
+): void {
+  const width = shape.width;
+  // Finer than a device pixel and a half, none of the detail would show.
+  const detailed = speed !== null && samples.length >= 4 && width * scale >= 1.6;
+  const thin = detailed ? thinStretches(samples, speed, width, pen, rng) : [];
+
+  ctx.globalAlpha = alpha;
+  if (thin.length > 0) {
+    ctx.save();
+    ctx.beginPath();
+    const box = bounds(samples, width * 3);
+    ctx.rect(box.x, box.y, box.w, box.h);
+    for (const t of thin) thinPath(ctx, samples, t);
+    ctx.clip('evenodd');
   }
+  ctx.beginPath();
+  tracePenStroke(ctx, samples, shape);
+  ctx.fill();
+  if (thin.length > 0) ctx.restore();
+
+  if (!detailed) return;
+  if (thin.length > 0 || pen.edge > 0) {
+    ctx.save();
+    ctx.beginPath();
+    tracePenStroke(ctx, samples, shape);
+    ctx.clip();
+    if (pen.edge > 0) {
+      ctx.globalAlpha = alpha * pen.edge * 0.55;
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = width * 0.22;
+      ctx.stroke();
+    }
+    for (const t of thin) {
+      ctx.globalAlpha = alpha * t.keep;
+      ctx.beginPath();
+      thinPath(ctx, samples, t);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // A bead of ink where the pen touched down, or all but stopped to turn back.
+  const n = samples.length;
+  const bead = (i: number, big: number) => {
+    const a = samples[Math.max(0, i - 1)];
+    const b = samples[Math.min(n - 1, i + 1)];
+    ctx.globalAlpha = alpha * (0.6 + 0.25 * big);
+    ctx.beginPath();
+    ctx.ellipse(samples[i].x, samples[i].y, width * (0.55 + 0.2 * big + rng() * 0.15), width * (0.45 + rng() * 0.1), Math.atan2(b.y - a.y, b.x - a.x), 0, Math.PI * 2);
+    ctx.fill();
+  };
+  if (rng() < pen.pooling * 0.07) bead(0, 1);
+  for (let i = 2; i < n - 2; i++) {
+    if (speed![i] > 0.35 || speed![i] > speed![i - 1] || speed![i] > speed![i + 1] || rng() > pen.pooling * 0.05) continue;
+    bead(i, 0);
+  }
+}
+
+/** Where along a stroke the pen ran short of ink, and how short. */
+function thinStretches(samples: Sample[], speed: Float32Array, width: number, pen: PenStyle, rng: () => number): Thin[] {
+  const n = samples.length;
+  const along = new Float32Array(n);
+  for (let i = 1; i < n; i++) along[i] = along[i - 1] + Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
+  const total = along[n - 1];
+  const fast = (i: number) => clamp((speed[i] - 0.9) / 1.1, 0, 1);
+  const out: Thin[] = [];
+  const cover = width * 1.2;
+
+  // The start, pale until the ball has rolled far enough to pick up ink.
+  let used = 0;
+  if (rng() < pen.dryStart && total > 0.8 * MM_UNITS) {
+    const reach = (0.15 + rng() * 0.2) * MM_UNITS;
+    const keep = 0.6 + rng() * 0.2;
+    const STEPS = 5;
+    let from = 0;
+    for (let step = 1; step <= STEPS; step++) {
+      const to = indexAt(along, (reach * step) / STEPS);
+      if (to > from) out.push({ from, to, offset: 0, half: cover, keep: keep + ((1 - keep) * (step - 1)) / STEPS });
+      from = to;
+    }
+    used = from;
+  }
+
+  // Burr streaks along a quick stretch.
+  if (pen.striation > 0 && total > 1 * MM_UNITS) {
+    const count = (rng() < 0.55 * pen.striation ? 1 : 0) + (rng() < 0.2 * pen.striation ? 1 : 0);
+    for (let c = 0; c < count; c++) {
+      const from = Math.max(used, indexAt(along, total * rng() * 0.5));
+      const to = indexAt(along, along[from] + total * (0.3 + rng() * 0.5));
+      if (to - from < 3) continue;
+      let quick = 0;
+      for (let i = from; i <= to; i++) quick += fast(i);
+      quick /= to - from + 1;
+      const start = (rng() - 0.5) * 0.45;
+      const drift = (rng() < 0.5 ? -1 : 1) * (0.1 + rng() * 0.25);
+      out.push({
+        from,
+        to,
+        offset: (t) => (start + drift * t) * width,
+        half: width * (0.04 + rng() * 0.04),
+        keep: clamp(0.75 - (0.15 + 0.45 * quick) * pen.striation, 0.1, 0.9),
+      });
+    }
+  }
+
+  // A skip: on a fast stretch the ink stops for a moment.
+  if (pen.skip > 0) {
+    for (let i = Math.max(1, used); i < n - 1; i++) {
+      if (speed[i] < 1.5 || rng() > pen.skip * 0.004 * fast(i)) continue;
+      const to = indexAt(along, along[i] + (0.1 + rng() * 0.25) * MM_UNITS);
+      if (to > i) out.push({ from: i, to, offset: 0, half: cover, keep: 0.1 + rng() * 0.35 });
+      break;
+    }
+  }
+  return out;
+}
+
+/** The first sample at least `distance` along the stroke. */
+function indexAt(along: Float32Array, distance: number): number {
+  for (let i = 0; i < along.length; i++) if (along[i] >= distance) return i;
+  return along.length - 1;
+}
+
+/** Trace a band along part of a stroke as a closed shape. A band from the very start reaches back over the round cap. */
+function thinPath(ctx: Ctx2D, samples: Sample[], t: Thin): void {
+  const left: number[] = [];
+  const right: number[] = [];
+  const n = samples.length;
+  for (let i = t.from; i <= t.to; i++) {
+    const a = samples[Math.max(0, i - 1)];
+    const b = samples[Math.min(n - 1, i + 1)];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const d = typeof t.offset === 'number' ? t.offset : t.offset((i - t.from) / Math.max(1, t.to - t.from));
+    let x = samples[i].x;
+    let y = samples[i].y;
+    if (i === 0) {
+      // Back over the cap the pen made as it touched down.
+      x -= ny * t.half;
+      y += nx * t.half;
+    }
+    left.push(x + nx * (d + t.half), y + ny * (d + t.half));
+    right.push(x + nx * (d - t.half), y + ny * (d - t.half));
+  }
+  ctx.moveTo(left[0], left[1]);
+  for (let k = 2; k < left.length; k += 2) ctx.lineTo(left[k], left[k + 1]);
+  for (let k = right.length - 2; k >= 0; k -= 2) ctx.lineTo(right[k], right[k + 1]);
+  ctx.closePath();
+}
+
+function bounds(samples: Sample[], pad: number): { x: number; y: number; w: number; h: number } {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const s of samples) {
+    if (s.x < x0) x0 = s.x;
+    if (s.x > x1) x1 = s.x;
+    if (s.y < y0) y0 = s.y;
+    if (s.y > y1) y1 = s.y;
+  }
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
+}
+
+/** A shade darker than a stroke's own, for ink that dries darker at the edge. */
+function edgeOf(palette: string[], shade: number): string {
+  return palette[Math.min(palette.length - 1, Math.round(clamp(shade + 0.7, -1, 1) * SHADE_STEPS) + SHADE_STEPS)];
 }
 
 const sketchCache = new Map<string, AnyCanvas>();
@@ -524,14 +700,16 @@ function drawStrokes(
   const nib = plain ? 0 : pen.nib * fontPx * 0.8;
   const nibAngle = pen.nibAngle * (Math.PI / 180);
   const flat: number[] = [];
-  for (const stroke of strokes) {
-    const color = palette[Math.round(clamp(stroke.shade, -1, 1) * SHADE_STEPS) + SHADE_STEPS];
+  strokes.forEach((stroke, n) => {
     ctx.globalAlpha = stroke.opacity;
-    ctx.fillStyle = color;
+    ctx.fillStyle = palette[Math.round(clamp(stroke.shade, -1, 1) * SHADE_STEPS) + SHADE_STEPS];
     const lw = Math.max(0.2, stroke.width * weight);
     flat.length = 0;
     for (const p of stroke.points) flat.push(p.x, p.y);
     const samples = stroke.points.length === 1 ? [{ x: flat[0], y: flat[1], p: 1 }] : smoothSamples(flat, 2, step);
+    // Seeded by where the stroke is, so a page draws the same way every time.
+    const rng = mulberry32(hashInts(Math.round(flat[0] * 8), Math.round(flat[1] * 8), n, 0x5e9));
+    const speed = plain || samples.length < 3 ? null : penDynamics(samples, rng, fontPx, pen.flow);
     if (stroke.fill && stroke.points.length >= 3) {
       // Inked in: the inside of the outline, then the outline itself on top.
       ctx.beginPath();
@@ -540,8 +718,7 @@ function drawStrokes(
       ctx.closePath();
       ctx.fill();
     }
-    ctx.beginPath();
-    tracePenStroke(ctx, samples, {
+    const shape: StrokeShape = {
       // A single point is a dab: its radius was given, not its width.
       width: stroke.points.length === 1 ? lw * 2 : lw,
       nib: stroke.points.length === 1 ? 0 : nib * Math.min(1, lw / (fontPx * 0.05)),
@@ -550,9 +727,9 @@ function drawStrokes(
       taperStart: true,
       taperEnd: stroke.taper !== false,
       taperLength: fontPx * 0.25,
-    });
-    ctx.fill();
-  }
+    };
+    inkStroke(ctx, samples, shape, speed, pen, rng, scale, stroke.opacity, edgeOf(palette, stroke.shade));
+  });
   ctx.restore();
 }
 
@@ -570,7 +747,7 @@ function shadePalette(hex: string): string[] {
   return out;
 }
 
-export function parseHex(hex: string): [number, number, number] {
+function parseHex(hex: string): [number, number, number] {
   let h = hex.trim().replace(/^#/, '');
   if (h.length === 3) h = h.replace(/./g, (c) => c + c);
   const n = /^[0-9a-f]{6}$/i.test(h) ? parseInt(h, 16) : 0x1a3a8a;

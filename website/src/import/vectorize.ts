@@ -369,7 +369,7 @@ function removeSpecks(mask: Uint8Array, width: number, height: number, minSize: 
  * Distance from each ink pixel to the nearest paper, in pixels (a two-pass
  * chamfer approximation, accurate to a few per cent, which is plenty).
  */
-export function distanceTransform(mask: Uint8Array, width: number, height: number): Float32Array {
+function distanceTransform(mask: Uint8Array, width: number, height: number): Float32Array {
   const INF = 1e9;
   const d = new Float32Array(mask.length);
   for (let i = 0; i < mask.length; i++) d[i] = mask[i] === 1 ? INF : 0;

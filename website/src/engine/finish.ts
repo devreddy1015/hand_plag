@@ -64,6 +64,26 @@ function drawBowed(ctx: Ctx2D, page: AnyCanvas, dx: number, dy: number, dw: numb
   }
 }
 
+/**
+ * Soften the whole page by a blur of `mm` millimetres, as a lens does. Done
+ * once over the finished page: blurring as each strip of a bowed page is
+ * drawn costs a filter pass per strip.
+ */
+function soften(fc: FinishContext, mm: number): void {
+  const { target, ctx, scale, createCanvas } = fc;
+  const px = mm * MM * scale;
+  if (px < 0.25 || !canBlur(ctx)) return;
+  const copy = scratchCanvas(target.width, target.height, 'soften', createCanvas);
+  get2d(copy).drawImage(target as CanvasImageSource, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.filter = `blur(${px.toFixed(2)}px)`;
+  ctx.drawImage(copy as CanvasImageSource, 0, 0);
+  ctx.restore();
+}
+
 /** Run a function over every pixel, in place. It gets and returns 0..255 channels. */
 function eachPixel(ctx: Ctx2D, w: number, h: number, fn: (x: number, y: number, rgb: number[]) => void): void {
   const image = ctx.getImageData(0, 0, w, h);
@@ -123,9 +143,9 @@ function flatbed(fc: FinishContext): void {
   ctx.fillRect(0, 0, w, h);
   ctx.translate(w / 2 + dx, h / 2 + dy);
   ctx.rotate(angle);
-  if (canBlur(ctx)) ctx.filter = `blur(${Math.max(0.25, 0.035 * MM * scale).toFixed(2)}px)`;
-  drawBowed(ctx, copy, -w / 2, -h / 2, w, h, 0, 0);
+  ctx.drawImage(copy as CanvasImageSource, -w / 2, -h / 2);
   ctx.restore();
+  soften(fc, 0.035);
 
   const lift = fc.bindingSide === 'left' ? 0 : w;
   const edge = w * 0.06;
@@ -174,6 +194,23 @@ function phoneScan(fc: FinishContext): void {
   ctx.rotate(angle);
   drawBowed(ctx, copy, (-w / 2) * grow, (-h / 2) * grow, w * grow, h * grow, bow, twist);
   ctx.restore();
+  // A phone's lens and sensor never resolve a pen line as sharply as it was drawn.
+  soften(fc, 0.03);
+
+  // The app sharpens what the lens softened: the edge of every line gets a
+  // faint light halo on the paper side, and the line itself a darker rim.
+  const soft = canBlur(ctx) ? scratchCanvas(w, h, 'soft', fc.createCanvas) : null;
+  let blurred: Uint8ClampedArray | null = null;
+  if (soft) {
+    const sctx = get2d(soft);
+    sctx.save();
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.filter = `blur(${Math.max(0.8, 0.1 * MM * scale).toFixed(2)}px)`;
+    sctx.drawImage(target as CanvasImageSource, 0, 0);
+    sctx.restore();
+    blurred = sctx.getImageData(0, 0, w, h).data;
+  }
+  const sharpen = 0.55;
 
   const light = lighting(r, w, h, fc.bindingSide, 0.09, 0.16);
   const noiseSeed = hashInts(seed, pageIndex, 0xa9a);
@@ -184,6 +221,10 @@ function phoneScan(fc: FinishContext): void {
   eachPixel(ctx, w, h, (x, y, c) => {
     const l = light(x, y);
     const n = grain(x, y, noiseSeed) * 3;
+    if (blurred) {
+      const i = (y * w + x) * 4;
+      for (let k = 0; k < 3; k++) c[k] += (c[k] - blurred[i + k]) * sharpen;
+    }
     let sum = 0;
     for (let k = 0; k < 3; k++) {
       const v = clamp((c[k] * l - low) / (high - low), 0, 1);
@@ -247,7 +288,6 @@ function photo(fc: FinishContext): void {
   ctx.restore();
 
   // Keystone: each row of the page is scaled to its share of the taper.
-  if (canBlur(ctx)) ctx.filter = `blur(${Math.max(0.3, 0.04 * MM * scale).toFixed(2)}px)`;
   const rows = Math.max(24, Math.min(260, Math.round(pageH / 6)));
   for (let i = 0; i < rows; i++) {
     const t0 = i / rows;
@@ -257,6 +297,7 @@ function photo(fc: FinishContext): void {
     ctx.drawImage(bowed as CanvasImageSource, 0, t0 * h, w, (t1 - t0) * h + 1, -dw / 2, -pageH / 2 + t0 * pageH, dw, (t1 - t0) * pageH + 1);
   }
   ctx.restore();
+  soften(fc, 0.04);
 
   const light = lighting(r, w, h, fc.bindingSide, 0.22, 0.3);
   const warm = [1, 0.955, 0.86];

@@ -26,7 +26,7 @@
  */
 
 /** A line containing only this marker starts a new page. */
-export const PAGE_BREAK = /^\s*\[\[page\]\]\s*$/i;
+const PAGE_BREAK = /^\s*\[\[page\]\]\s*$/i;
 
 export type BlockKind = 'paragraph' | 'heading' | 'list' | 'quote' | 'divider' | 'blank' | 'pagebreak' | 'image' | 'caption';
 

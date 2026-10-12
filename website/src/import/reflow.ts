@@ -368,7 +368,7 @@ function clampBin(v: number): number {
 }
 
 /** Drop the lines a publisher repeats at the top or bottom of every page. */
-export function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
+function dropRunningHeads(pages: PageLines[], warnings: string[]): void {
   const counts = new Map<string, number>();
   const key = (line: Line) => line.text.replace(/\d+/g, '#').trim().toLowerCase();
   for (const page of pages) {
@@ -432,7 +432,7 @@ interface OutBlock {
  * space above a line, and whether the line before it stopped short — so each
  * decision is made from several of them at once rather than any one alone.
  */
-export function assemble(pages: PageLines[], opts: PdfOptions): string {
+function assemble(pages: PageLines[], opts: PdfOptions): string {
   const all = pages.flatMap((p) => p.lines);
   if (all.length === 0) return '';
 

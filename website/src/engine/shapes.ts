@@ -24,11 +24,11 @@
  */
 import { clamp, gaussian, hashInts, hashString, mulberry32, smoothstep } from './random';
 
-export const OP_MOVE = 0;
-export const OP_LINE = 1;
-export const OP_QUAD = 2;
-export const OP_CUBIC = 3;
-export const OP_CLOSE = 4;
+const OP_MOVE = 0;
+const OP_LINE = 1;
+const OP_QUAD = 2;
+const OP_CUBIC = 3;
+const OP_CLOSE = 4;
 
 /** A glyph outline: each opcode followed by its coordinates, in em units. */
 export type Outline = Float32Array;

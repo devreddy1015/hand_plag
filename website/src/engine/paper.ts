@@ -16,7 +16,7 @@ export const PAPER_SIZES: PaperSize[] = [
   { id: 'index-5x3', label: 'Index card (5 × 3 in)', width: 127, height: 76.2 },
 ];
 
-export function findPaperSize(id: string): PaperSize {
+function findPaperSize(id: string): PaperSize {
   return PAPER_SIZES.find((p) => p.id === id) ?? PAPER_SIZES[0];
 }
 
