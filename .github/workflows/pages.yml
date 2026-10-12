@@ -33,7 +33,7 @@ jobs:
       - run: npm run build
       # The site's "Android app" button downloads handscript.apk from beside it,
       # so build the app too and publish the APK with the site.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
