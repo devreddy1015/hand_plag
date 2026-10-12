@@ -8,15 +8,24 @@
       name="description"
       content="Turn typed text, PDFs and Word files into realistic handwriting on real paper, then download a PDF or PNG. Free, no sign-up, no page limits, and nothing leaves your browser."
     />
-    <meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f4ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
     <meta property="og:title" content="Handscript" />
     <meta property="og:description" content="Turn typed text, PDFs and Word files into realistic handwriting on paper." />
     <meta property="og:type" content="website" />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23fdfcf7'/%3E%3Cpath d='M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4' fill='none' stroke='%231d3b8f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f4f4ef'/%3E%3Cpath d='M6 22c3-8 5-12 7-12s-1 10 2 10 3-7 5-7-1 6 1 6 3-2 4-4' fill='none' stroke='%23e26333' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
     />
+    <script>
+      // The finish chosen in the top bar, set before the page is drawn so it does not flash the other one.
+      try {
+        const theme = localStorage.getItem('handscript.theme.v1');
+        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+      } catch {
+        // Storage blocked: follow the system.
+      }
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#stage-scroll">Skip to the page preview</a>
@@ -29,8 +38,27 @@
         <span>Handscript</span>
       </div>
       <p class="tagline">Text, PDF or Word in. Handwriting out. Nothing leaves this browser.</p>
+      <div class="segmented theme" id="theme-switch" role="group" aria-label="Colour theme">
+        <button type="button" data-theme-choice="auto" title="Follow the system" aria-label="Follow the system">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <circle cx="10" cy="10" r="6.5" />
+            <path d="M10 3.5v13a6.5 6.5 0 0 0 0-13Z" fill="currentColor" />
+          </svg>
+        </button>
+        <button type="button" data-theme-choice="light" title="Light" aria-label="Light">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <circle cx="10" cy="10" r="3.2" />
+            <path d="M10 2.5v1.8M10 15.7v1.8M2.5 10h1.8M15.7 10h1.8M4.7 4.7l1.3 1.3M14 14l1.3 1.3M4.7 15.3 6 14M14 6l1.3-1.3" />
+          </svg>
+        </button>
+        <button type="button" data-theme-choice="dark" title="Dark" aria-label="Dark">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
+            <path d="M16.5 12.2A6.5 6.5 0 0 1 7.8 3.5a6.5 6.5 0 1 0 8.7 8.7Z" />
+          </svg>
+        </button>
+      </div>
       <div class="topbar-actions">
-        <label class="button small" id="import-label">
+        <label class="button small">
           <svg viewBox="0 0 20 20" aria-hidden="true" class="icon-svg">
             <path d="M10 14V3m0 0L6 7m4-4 4 4M3 13v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
           </svg>
@@ -78,7 +106,7 @@
               <label class="field"><span>ID / roll no.</span><input type="text" data-key="writerId" autocomplete="off" spellcheck="false" /></label>
               <label class="check"><input type="checkbox" data-key="writerEveryPage" /> <span>Head every page, not just the first</span></label>
             </div>
-            <p class="hint" id="easy-note">Diagrams, charts and equations in a PDF are drawn again by hand.</p>
+            <p class="hint">Diagrams, charts and equations in a PDF are drawn again by hand.</p>
           </section>
 
           <section class="step">
@@ -153,7 +181,13 @@
               <button type="button" class="big" id="easy-png">Images</button>
             </div>
             <progress id="easy-progress" max="1" value="0" hidden></progress>
-            <p class="hint" id="easy-status" role="status" aria-live="polite">Free, no sign-up, no watermark. Nothing leaves this browser.</p>
+            <ul class="specs" aria-label="Terms">
+              <li>Free</li>
+              <li>No sign-up</li>
+              <li>No watermark</li>
+              <li class="hot">0 bytes uploaded</li>
+            </ul>
+            <p class="hint" id="easy-status" role="status" aria-live="polite"></p>
           </section>
         </div>
 

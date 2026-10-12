@@ -1,3 +1,10 @@
+// The editor's own type, bundled like the handwriting fonts so nothing is fetched from elsewhere.
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/inter/latin-700.css';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
 import './ui/style.css';
 import { isApp, saveFile, startPlatform } from '#platform';
 import {
@@ -23,6 +30,8 @@ import { MAIN_LOOKS, PRESETS, applyPreset, matchesPreset } from './ui/presets';
 
 const STORAGE_KEY = 'handscript.settings.v2';
 const ADVANCED_KEY = 'handscript.advanced.v1';
+/** Read before the page is drawn too, by the script in index.html. */
+const THEME_KEY = 'handscript.theme.v1';
 const IMPORT_KEY = 'handscript.import.v1';
 
 /** Settings that only change how a page is painted, not where the letters go. */
@@ -308,6 +317,7 @@ function bindControls(): void {
 
   buildTabs();
   bindAdvanced();
+  bindTheme();
   buildPresets();
   buildTemplates();
   buildFonts();
@@ -479,6 +489,42 @@ function bindAdvanced(): void {
       // Not worth reporting.
     }
     apply();
+  });
+  apply();
+}
+
+/**
+ * Light, dark, or whatever the system is set to. The page's colours follow
+ * from one attribute; the samples of your own hands are drawn in the text
+ * colour, so they are drawn again when it changes.
+ */
+function bindTheme(): void {
+  const root = document.documentElement;
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>('#theme-switch button')];
+  const metas = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  const systemColors = metas.map((meta) => meta.content);
+  const apply = () => {
+    const choice = root.dataset.theme ?? 'auto';
+    for (const button of buttons) button.setAttribute('aria-pressed', String(button.dataset.themeChoice === choice));
+    // The browser's own bar takes the chosen finish too, not the system's.
+    metas.forEach((meta, i) => (meta.content = choice === 'light' ? '#f4f4ef' : choice === 'dark' ? '#0a0a0a' : systemColors[i]));
+    if (ownHands.length > 0) refreshHands();
+  };
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      const choice = button.dataset.themeChoice!;
+      if (choice === 'light' || choice === 'dark') root.dataset.theme = choice;
+      else delete root.dataset.theme;
+      try {
+        localStorage.setItem(THEME_KEY, choice);
+      } catch {
+        // Not worth reporting.
+      }
+      apply();
+    });
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!root.dataset.theme) apply();
   });
   apply();
 }
