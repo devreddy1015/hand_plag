@@ -540,3 +540,40 @@ describe('what gets written', () => {
     expect(sub.scaleY).toBeLessThan(h.scaleY);
   });
 });
+
+describe('spacing a hand leaves', () => {
+  /** Letters drawn on the first line, with where each starts. */
+  const firstLine = (doc: ReturnType<typeof layout>) => {
+    const glyphs = doc.pages[0].glyphs;
+    return glyphs.filter((g) => Math.abs(g.y - glyphs[0].y) < 6);
+  };
+
+  it('leaves at least about an "o" between words, however narrow the font\'s space', () => {
+    // The fake font's space is half a letter; at messiness 0 nothing else moves.
+    const narrow = (text: string) => {
+      let w = 0;
+      for (const ch of text) w += ch === ' ' ? 2 : 10;
+      return w;
+    };
+    const s = settings({ text: 'ab cd', corrections: 0, lineFill: 0, markdown: false, messiness: 0 });
+    const doc = layoutDocument(s.text, (i) => pageGeometry(s, i), FONT_PX, s, narrow);
+    const [, b, c] = firstLine(doc);
+    const xHeight = s.letterSize * doc.geometry.spacing;
+    expect(c.x - (b.x + 10)).toBeGreaterThanOrEqual(xHeight * 0.7);
+  });
+
+  it('keeps letters that are not joined from running into each other', () => {
+    // Every letter's ink reaches past its advance on the right, low down.
+    const bands = Array.from({ length: 32 }, (_, i) => (i >= 20 && i <= 22 ? ([0, 0.75] as const) : null));
+    const doc = layout('rn', { messiness: 0 }, { inkSpan: () => bands });
+    const [r, n] = firstLine(doc);
+    expect((n.x - r.x) / FONT_PX).toBeGreaterThanOrEqual(0.75);
+  });
+
+  it('lets letters of a joined hand meet', () => {
+    const bands = Array.from({ length: 32 }, (_, i) => (i >= 20 && i <= 22 ? ([0, 0.75] as const) : null));
+    const doc = layout('rn', { messiness: 0 }, { inkSpan: () => bands, connected: true });
+    const [r, n] = firstLine(doc);
+    expect(n.x - r.x).toBeCloseTo(10, 5);
+  });
+});

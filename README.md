@@ -65,18 +65,33 @@ people actually write, not how a typesetter sets type:
 
 - Letters are written with a pen, not filled in. Each letter of a font is drawn large and
   thinned back to the line through the middle of every stroke — the path the pen took —
-  and that line is written with the chosen pen: thin, as a ballpoint line is, tapering where
-  the pen touches down and lifts off, heavier on down-strokes, darker where two strokes
-  cross, with now and then a bead of ink where the pen landed.
+  and each stroke is run the way a hand writes it, the same way every time: uprights
+  downwards, cross-strokes from the left, loops anticlockwise from the top, dots last. That
+  line is written with the chosen pen: thin, as a ballpoint line is, tapering where the pen
+  touches down and lifts off, darker where two strokes cross.
+- The pen moves as a hand moves it. Each stroke is a run of movements, one between each
+  cusp or change of bend, each at its own pace — quicker for a long one, slower into a tight
+  turn, a tenth faster or slower than last time — starting from rest and slowing to the
+  lift. The ink follows: a down-stroke is pressed harder than an up-stroke (the difference
+  document examiners look for to tell a person from a plotter), a slow stretch leaves a
+  wider line than a quick one, a ballpoint leaves pale streaks along a fast stroke and now
+  and then a pale start or a skip, and ink beads where the pen all but stopped to turn.
 - No two copies of a letter are the same. A font draws every "e" identically; here each one
   is bent before it is drawn — the ascender a little taller, the bowl a little wider, the
   loop closing somewhere else — in two layers, as in a real hand: a few habitual forms of
   each letter, and the small differences of each copy.
-- The hand is steady inside a word and wanders between words; it drifts slowly in size,
+- The hand is steady inside a word and wanders between words: a letter sits near where the
+  one before it sat rather than hopping about, the slant is a habit that hardly moves, and
+  the height and width of the letters swell and ebb along a line. It drifts slowly in size,
   slant and spacing over many lines, and gets messier down the page and through the
-  document. Words never run together.
+  document. Words never run together: the gap between them is never much less than an "o"
+  is wide, measured ink to ink, however narrow the font's own space. Letters may come close but
+  never run into one another where it would make a new letter of them — an "r" touching an
+  "n" reads as "m".
 - Lines are filled the way a writer fills them: crammed a little, run past the margin, or
-  hyphenated, rather than left conspicuously short. Letters crowd together as the margin
+  — rarely, and only a long word with a lot of room left — hyphenated where a person would
+  break it ("ma-ter", never "organi-sm."), rather than left conspicuously short. A heading is
+  underlined in one go or a word at a time, each stroke at its own angle. Letters crowd together as the margin
   approaches. A figure that will not fit is drawn at the top of the next page while the
   writing carries on underneath, rather than leaving half a page empty.
 - Optional human corrections: a word started wrong and crossed out, one squeezed in above
@@ -102,11 +117,14 @@ across it are broad and strokes along it are fine. Lines drawn with the pen (und
 diagrams, your own letters) thin where the pen touches down and lifts off. The ink goes
 down unevenly, as it does on paper, bleeds into the paper, dries darker at the edge of a
 gel or fountain-pen stroke, pools where the pen is set down, and pencil is broken up by the
-tooth of the paper.
+tooth of the paper. Each pen has its own habits: a ballpoint's paste hardly spreads when
+the pen slows and streaks when it runs fast, gel and rollerball ink spread more and skip
+now and then, and fountain-pen ink spreads most.
 
 **Handed over how you like.** A phone-app scan, the way most homework is handed in — the
-paper pushed to white, the ink to deep and saturated, the sheet still bowed, a sliver of
-desk at one edge and the phone's shadow across a corner — which is how a page first looks.
+paper pushed to white, the ink to deep and saturated, the line a touch soft from the
+phone's lens and sharpened again by the app, the sheet still bowed, a sliver of desk at
+one edge and the phone's shadow across a corner — which is how a page first looks.
 Or a flatbed scan (crooked on the glass, grey cast, shade along the binding), a photo on a
 desk (keystoned, bowed, warm light, the hand's shadow, grain, wood or table beneath), or
 the flat page. Export a
@@ -115,7 +133,7 @@ its title and nothing else: no creator or producer stamp.
 
 The panel opens with the settings most people need — the paper, the hand, the pen — and
 **Download PDF** sits in the top bar. **All settings** in the header brings out the rest: margins, printed
-furniture, the ten realism weights, page ranges and the like. The choice is remembered.
+furniture, the eleven realism weights, page ranges and the like. The choice is remembered.
 
 ## Project layout
 
@@ -200,11 +218,11 @@ importer  lists      seeded per-glyph jitter,             ink layer (multiply bl
 | `website/src/engine/layout.ts` | Splits blocks into lines and pages. Samples the jitter for each glyph from seeds based on position, so editing one paragraph doesn't reshuffle the others. |
 | `website/src/engine/render.ts` | Paints one page at any scale: paper, then the ink layer blended with multiply, then the finish. Letters are drawn from their bent outlines, pen lines as pen strokes. |
 | `website/src/engine/shapes.ts` | Letter outlines and the two-layer bend (habitual form, and this copy) that keeps any two copies of a letter from matching. |
-| `website/src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. |
+| `website/src/engine/pen.ts` | The pens, and the outline of a pen stroke: tapering at each end, broad across a nib. How fast the pen moved along a stroke and how hard it pressed, which sets the width of the line. |
 | `website/src/engine/depth.ts` | Paper with depth: the groove each stroke presses into the sheet, and the other side of the sheet showing through, mirrored and broken up by the fibre. |
 | `website/src/engine/symbols.ts` | Greek letters and mathematical signs as pen strokes, fitted to the hand they are written in. |
 | `website/src/engine/finish.ts` | How the page was captured: phone-app scan, flatbed scan or photo — bowed paper, uneven light, shadows, enhancement and grain. |
-| `website/src/strokefont.ts` | Turns each letter of a font into the pen strokes it was drawn with, by thinning it to its centre line. |
+| `website/src/strokefont.ts` | Turns each letter of a font into the pen strokes it was drawn with, by thinning it to its centre line, each stroke run the way a hand writes it. |
 | `website/src/engine/sketch.ts` | Drawing a traced diagram by hand: bowed, unsteady lines, overshooting corners, closing overlaps, hatching per colour. |
 | `website/src/engine/paper.ts` | Paper sizes, page geometry, printed furniture and the procedural paper texture. |
 | `website/src/engine/templates.ts` | The paper templates and the features each one turns on. |
@@ -250,11 +268,15 @@ characters don't block typing.
    and photo finishes~~ (done).
 3. ~~Your own handwriting written on screen; diagrams and equations traced and drawn by
    hand; letters that never repeat~~ (done).
-4. Rich text editor (Tiptap): tables, and typed maths (KaTeX) laid out as handwriting.
-5. Your handwriting from a photo of a filled-in template, so real ink comes with it.
-6. B2B API: headless rendering with the same engine, CSV batch personalisation, and
+4. Letters varied the way a hand varies them: each font stroke rewritten as a chain of
+   Sigma-Lognormal movements (Plamondon's kinematic theory), and each copy of a letter
+   made by nudging those movements within the ranges published for one writer's repeated
+   letters, rather than by bending its shape.
+5. Rich text editor (Tiptap): tables, and typed maths (KaTeX) laid out as handwriting.
+6. Your handwriting from a photo of a filled-in template, so real ink comes with it.
+7. B2B API: headless rendering with the same engine, CSV batch personalisation, and
    print-ready PDFs (bleed, trim box, PDF/X).
-7. Neural "your handwriting from one sample" (One-DM / DiffusionPen) as a GPU job whose
+8. Neural "your handwriting from one sample" (One-DM / DiffusionPen) as a GPU job whose
    word images slot into this layout engine.
 
 ## Fonts and licensing

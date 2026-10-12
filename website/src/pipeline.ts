@@ -5,7 +5,9 @@ import {
   graphemes,
   hasMarks,
   hasSymbol,
+  INK_BANDS,
   layoutDocument,
+  penFor,
   LATIN_TWINS,
   pageGeometry,
   renderPage,
@@ -18,6 +20,7 @@ import {
   type GlyphShapes,
   type ImageInfo,
   type Measurer,
+  type InkSpan,
   type Settings,
 } from './engine';
 import { createMeasurer, cssFontStack, fallbackScaler, findFont, fontFamiliesFor, fontMetrics, loadFonts, type FontEntry } from './fonts';
@@ -58,8 +61,55 @@ export async function prepare(settings: Settings): Promise<Prepared> {
     unitScale: unitScaler(font, families),
     imageSize: (src) => imageSizeFor(src, settings, geometry.spacing),
     substitute: substituter(outlines, font),
+    inkSpan: inkSpans(shapes, penWidth(shapes, settings)),
   });
   return { settings, doc, fontStack, shapes };
+}
+
+/**
+ * The widest line the chosen pen draws a letter with, in em: the hand's own
+ * weight, made heavier or lighter by the pen, pressed hard and written slowly.
+ */
+function penWidth(shapes: GlyphShapes, settings: Settings): number {
+  const pen = penFor(settings.pen);
+  return (shapes.strokeWeight ?? pen.lineWeight) * (pen.lineWeight / penFor('ballpoint').lineWeight) * settings.inkWeight * 1.25;
+}
+
+/**
+ * How far across its width each letter's ink reaches, pen width included, in
+ * each band of its height, so the layout can keep letters that are not
+ * joined from touching. A "y" whose tail sweeps back under the letter before
+ * it is not in that letter's way, and nor is the arm of an "r" in the way of
+ * the middle of an "e".
+ */
+function inkSpans(shapes: GlyphShapes, width: number): (unit: string) => InkSpan | null {
+  const cache = new Map<string, InkSpan | null>();
+  const half = width / 2;
+  const zone = (y: number) => Math.min(INK_BANDS.count - 1, Math.max(0, Math.floor((y - INK_BANDS.top) / INK_BANDS.height)));
+  return (unit) => {
+    let span = cache.get(unit);
+    if (span === undefined) {
+      const glyph = shapes.strokeGlyph?.(unit, 0);
+      const zones = Array.from({ length: INK_BANDS.count }, (): [number, number] => [Infinity, -Infinity]);
+      const add = (x: number, y: number) => {
+        const z = zones[zone(y)];
+        if (x < z[0]) z[0] = x;
+        if (x > z[1]) z[1] = x;
+      };
+      for (const stroke of glyph?.strokes ?? []) {
+        for (let i = 0; i < stroke.length; i += 3) {
+          add(stroke[i], stroke[i + 1]);
+          if (i + 5 >= stroke.length) continue;
+          // Walk each segment, so a long straight stroke counts in every zone it crosses.
+          const steps = Math.ceil(Math.hypot(stroke[i + 3] - stroke[i], stroke[i + 4] - stroke[i + 1]) / 0.02);
+          for (let k = 1; k < steps; k++) add(stroke[i] + ((stroke[i + 3] - stroke[i]) * k) / steps, stroke[i + 1] + ((stroke[i + 4] - stroke[i + 1]) * k) / steps);
+        }
+      }
+      span = zones.some(([lo, hi]) => hi >= lo) ? zones.map(([lo, hi]) => (hi >= lo ? ([lo - half, hi + half] as const) : null)) : null;
+      cache.set(unit, span);
+    }
+    return span;
+  };
 }
 
 function shapesFor(font: FontEntry, outlines: OutlineFont | null, xHeight: number, capHeight: number): GlyphShapes {

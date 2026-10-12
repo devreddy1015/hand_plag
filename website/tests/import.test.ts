@@ -62,4 +62,21 @@ describe('hyphenPoint', () => {
     expect(at('cat', 3)).toBe(0);
     expect(at('house', 3)).toBe(0);
   });
+  it('does not count a full stop as a letter left over', () => {
+    // "organi-sm." would leave two letters on the next line.
+    expect(at('organism.', 6)).toBeLessThanOrEqual(5);
+  });
+
+  it('never splits a pair of letters that make one sound', () => {
+    const word = 'chlorophyll';
+    for (let target = 3; target <= 8; target++) {
+      const point = at(word, target);
+      if (point > 0) expect(['ch', 'ph']).not.toContain(word.slice(point - 1, point + 1));
+    }
+  });
+
+  it('will not break a consonant from the vowel after it', () => {
+    // org-anism: a writer breaks or-ganism, or not at all.
+    expect(at('organism', 3)).not.toBe(3);
+  });
 });

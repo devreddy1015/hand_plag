@@ -108,7 +108,7 @@ export async function addPictureFile(file: File): Promise<Picture> {
  * photograph, or anything too busy to be line art, gives null and is stuck
  * on the page as it is.
  */
-export function traceImage(image: HTMLImageElement): Sketch | null {
+function traceImage(image: HTMLImageElement): Sketch | null {
   const nw = image.naturalWidth;
   const nh = image.naturalHeight;
   if (nw < 8 || nh < 8) return null;

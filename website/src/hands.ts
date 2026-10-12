@@ -65,7 +65,7 @@ const STORAGE_KEY = 'handscript.hands.v1';
  * is captured, so a hand does not depend on the size of the screen it was
  * written on.
  */
-export const GUIDE = { xHeight: 0.5, cap: 0.72, descender: 0.24 };
+const GUIDE = { xHeight: 0.5, cap: 0.72, descender: 0.24 };
 
 /** Space either side of a letter's ink, in em. */
 const BEARING = 0.045;

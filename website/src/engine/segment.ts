@@ -73,7 +73,7 @@ export function graphemes(text: string): string[] {
   return out;
 }
 
-export function needsShaping(word: string): boolean {
+function needsShaping(word: string): boolean {
   return SHAPED_SCRIPT.test(word);
 }
 
@@ -154,6 +154,8 @@ export function tokenize(paragraph: string, forceShaped = false): Token[] {
 }
 
 const VOWEL = /[aeiouyàáâäãåèéêëìíîïòóôöõùúûüāēīōū]/i;
+/** Pairs of letters that make one sound, and are never split by a hyphen. */
+const DIGRAPHS = new Set(['ch', 'sh', 'th', 'ph', 'wh', 'gh', 'ck', 'qu', 'gu', 'rh']);
 const LETTER = /\p{L}/u;
 
 /**
@@ -161,13 +163,17 @@ const LETTER = /\p{L}/u;
  * candidate closest to (but not after) `target`. Returns 0 when the word
  * should not be broken.
  *
- * The rules are the ones people actually use by ear: keep at least two
- * letters on each line, break between two consonants or after a vowel, and
+ * The rules are the ones people actually use by ear: keep at least three
+ * letters on each line (a full stop does not count as one), break between
+ * two consonants or after a vowel that has a consonant and a vowel after it,
+ * never inside a pair of letters that make one sound ("ch", "th", "ck"), and
  * never split a digit run or a hyphenated compound in the wrong place.
  */
 export function hyphenPoint(units: string[], target: number): number {
   const n = units.length;
   if (n < 6 || target < 3) return 0;
+  const lettersAfter = new Array<number>(n + 1).fill(0);
+  for (let i = n - 1; i >= 0; i--) lettersAfter[i] = lettersAfter[i + 1] + (LETTER.test(units[i]) ? 1 : 0);
   const limit = Math.min(target, n - 3);
   let best = 0;
   let bestScore = -1;
@@ -176,12 +182,18 @@ export function hyphenPoint(units: string[], target: number): number {
     const next = units[i];
     if (!LETTER.test(prev) || !LETTER.test(next)) continue;
     if (prev === next) continue; // don't split a doubled letter pair badly
+    if (lettersAfter[i] < 3 || lettersAfter[0] - lettersAfter[i] < 3) continue;
+    if (DIGRAPHS.has((prev + next).toLowerCase())) continue;
     const prevVowel = VOWEL.test(prev);
     const nextVowel = VOWEL.test(next);
-    let score = 1;
-    if (!prevVowel && !nextVowel) score = 4; // between two consonants: cleanest
-    else if (prevVowel && !nextVowel) score = 3; // after a vowel
-    else if (!prevVowel && nextVowel) score = 2;
+    const after = units[i + 1];
+    // Between two consonants is cleanest; after a vowel, before a consonant
+    // and a vowel ("ma-ter") next. Anything else ("org-anism") a writer
+    // would rather not do.
+    let score: number;
+    if (!prevVowel && !nextVowel) score = 4;
+    else if (prevVowel && !nextVowel) score = after !== undefined && VOWEL.test(after) ? 3.5 : 2.5;
+    else continue;
     // Prefer breaks close to the end of the available room.
     score += (i / limit) * 1.5;
     if (score > bestScore) {
